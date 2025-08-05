@@ -2,8 +2,8 @@
 
 import { useParams } from 'next/navigation'
 import { useState } from 'react'
-import ThreadSidebar from '@/components/modules/messages/ThreadSidebar'
-import MessagingPanel from '@/components/modules/messages/MessagingPanel'
+import ThreadSidebar from '@/components/features/messaging/ThreadSidebar'
+import MessagingPanel from '@/components/features/messaging/MessagingPanel'
 import { Separator } from '@/components/ui/separator'
 
 export default function MessagingPage() {

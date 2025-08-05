@@ -3,7 +3,7 @@
 'use client'
 
 import { useParams } from 'next/navigation'
-import DocumentsModule from '@/components/modules/DocumentsModule//DocumentsModule'
+import DocumentsModule from '@/components/features/documents/DocumentsModule'
 
 export default function ProjectDocumentsPage() {
   const { id } = useParams() // Changed from projectId to id
