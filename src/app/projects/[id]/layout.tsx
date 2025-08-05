@@ -1,5 +1,5 @@
 import { ReactNode } from "react"
-import { ProjectSidebar } from "@/components/projects/ProjectSidebar"
+import { ProjectSidebar } from "@/components/features/projects/ProjectSidebar"
 
 export default function ProjectLayout({ children }: { children: ReactNode }) {
   return (
