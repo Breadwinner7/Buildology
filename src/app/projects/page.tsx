@@ -39,7 +39,8 @@ import {
   Download, FileText, Building, Hammer, Users, Clock,
   CheckSquare, Archive, Copy, Mail, PoundSterling,
   Settings, BarChart3, Target, AlertTriangle, Building2,
-  HardHat, Home, Calendar as CalendarIcon, ChevronDown
+  HardHat, Home, Calendar as CalendarIcon, ChevronDown,
+  Shield, Crown
 } from 'lucide-react'
 
 interface Project {
@@ -209,6 +210,9 @@ export default function ProjectsPage() {
   const router = useRouter()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [currentUser, setCurrentUser] = useState<any>(null)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -241,21 +245,87 @@ export default function ProjectsPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<ProjectTemplate | null>(null)
   const [showTemplateDialog, setShowTemplateDialog] = useState(false)
 
-  useEffect(() => {
-    const fetchProjects = async () => {
-      const { data, error } = await supabase
+// Replace your useEffect with this simplified version (after disabling RLS):
+
+useEffect(() => {
+  const fetchProjects = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      console.log('🔍 Starting project fetch...')
+
+      // Check authentication
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError || !user) {
+        console.error('❌ Authentication error:', authError)
+        setError('Please log in to view projects')
+        setLoading(false)
+        return
+      }
+
+      console.log('👤 Authenticated user:', user.email, 'ID:', user.id)
+
+      // Get user profile by email (RLS is now disabled)
+      console.log('🔍 Fetching user profile by email...')
+      const { data: userProfile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('id, email, full_name, role, super_admin')
+        .eq('email', user.email)
+        .single()
+
+      console.log('👤 Profile result:', { userProfile, profileError })
+
+      if (profileError || !userProfile) {
+        console.error('❌ Profile not found:', profileError)
+        setError(`Profile not found for ${user.email}. Please contact administrator.`)
+        setLoading(false)
+        return
+      }
+
+      console.log('✅ Profile found:', {
+        email: userProfile.email,
+        role: userProfile.role,
+        super_admin: userProfile.super_admin
+      })
+
+      setCurrentUser(userProfile)
+      const isAdmin = userProfile.super_admin || userProfile.role === 'super_admin'
+      setIsSuperAdmin(isAdmin)
+
+      console.log('🔧 Access level:', { isAdmin })
+
+      // Fetch all projects (you're super admin)
+      console.log('🌟 Fetching all projects...')
+      const { data: projectsData, error: projectsError } = await supabase
         .from('projects')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (!error && data) {
-        setProjects(data)
+      console.log('📊 Projects result:', { 
+        count: projectsData?.length || 0, 
+        error: projectsError 
+      })
+
+      if (projectsError) {
+        console.error('❌ Error fetching projects:', projectsError)
+        setError('Failed to load projects: ' + projectsError.message)
+      } else {
+        console.log('✅ Projects loaded successfully')
+        setProjects(projectsData || [])
       }
+
+    } catch (error: any) {
+      console.error('💥 Unexpected error:', error)
+      setError('An unexpected error occurred: ' + error.message)
+    } finally {
       setLoading(false)
     }
+  }
 
-    fetchProjects()
-  }, [])
+  fetchProjects()
+}, [])
 
   const filteredAndSortedProjects = useMemo(() => {
     let filtered = projects.filter((project) => {
@@ -432,8 +502,13 @@ export default function ProjectsPage() {
     return (
       <div className="p-8">
         <div className="flex items-center justify-between mb-6">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-10 w-32" />
+          <div className="flex items-center gap-2">
+            <Building2 className="w-8 h-8 text-blue-600" />
+            <div>
+              <h1 className="text-3xl font-bold">Project Management</h1>
+              <p className="text-muted-foreground">Loading projects...</p>
+            </div>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
           {[1, 2, 3, 4, 5].map(i => (
@@ -449,6 +524,34 @@ export default function ProjectsPage() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="p-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Building2 className="w-8 h-8 text-blue-600" />
+            <div>
+              <h1 className="text-3xl font-bold">Project Management</h1>
+              <p className="text-red-600">Error: {error}</p>
+            </div>
+          </div>
+        </div>
+        <Card className="p-6">
+          <CardContent>
+            <div className="text-center">
+              <AlertTriangle className="w-16 h-16 mx-auto text-red-500 mb-4" />
+              <h3 className="text-lg font-medium mb-2">Failed to Load Projects</h3>
+              <p className="text-muted-foreground mb-4">{error}</p>
+              <Button onClick={() => window.location.reload()}>
+                Try Again
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
       {/* Header */}
@@ -457,88 +560,106 @@ export default function ProjectsPage() {
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Building2 className="w-8 h-8 text-blue-600" />
             Project Management
+            {isSuperAdmin && (
+              <Badge variant="secondary" className="ml-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white">
+                <Crown className="w-3 h-3 mr-1" />
+                Super Admin
+              </Badge>
+            )}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Comprehensive project and claims management for the UK building industry
+            {isSuperAdmin 
+              ? "Full system access - viewing all projects" 
+              : "Comprehensive project and claims management for the UK building industry"
+            }
           </p>
+          {currentUser && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Logged in as: {currentUser.email}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={exportToCSV} className="flex items-center gap-2">
             <Download className="w-4 h-4" />
             Export
           </Button>
-<Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
-  <DialogTrigger asChild>
-    <Button variant="outline" className="flex items-center gap-2">
-      <FileText className="w-4 h-4" />
-      Templates
-    </Button>
-  </DialogTrigger>
-  <DialogContent className="max-w-[95vw] w-full max-h-[90vh] overflow-y-auto p-0">
-    <DialogHeader className="p-6 pb-4">
-      <DialogTitle className="text-2xl">Choose Project Template</DialogTitle>
-      <DialogDescription className="text-base mt-2">
-        Select a template to quickly set up your project with industry-standard workflows and checklists
-      </DialogDescription>
-    </DialogHeader>
-    
-    <div className="px-6 pb-6">
-      <div className="grid grid-cols-1 md:grid-cols-1 2xl:grid-cols-3 gap-8">
-        {PROJECT_TEMPLATES.map((template) => (
-          <Card key={template.id} className="h-full flex flex-col hover:shadow-lg transition-all duration-200 border-2 hover:border-blue-300">
-            <CardHeader className="flex-shrink-0">
-              <div className="space-y-3">
-                <div>
-                  <CardTitle className="text-lg leading-tight">{template.name}</CardTitle>
-                  <Badge variant="outline" className="mt-2 text-xs px-2 py-1">
-                    {template.project_type}
-                  </Badge>
-                </div>
-              </div>
-            </CardHeader>
-            
-            <CardContent className="flex-1 flex flex-col justify-between space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {template.description}
-                </p>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Clock className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-medium">~{template.estimated_duration_weeks} weeks</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <PoundSterling className="w-4 h-4 text-green-600" />
-                  <span className="text-sm font-medium">{template.typical_contract_value_range}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <CheckSquare className="w-4 h-4 text-purple-600" />
-                  <span className="text-sm font-medium">{template.checklist_items.length} checklist items</span>
-                </div>
-              </div>
-              
-              <Button
-                onClick={() => handleCreateFromTemplate(template)}
-                className="w-full mt-4"
-                size="lg"
-              >
-                Use This Template
+
+          {/* Template Dialog */}
+          <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Templates
               </Button>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      
-      <div className="text-center mt-8 p-4 bg-muted/30 rounded-lg">
-        <p className="text-sm text-muted-foreground">
-          <strong>Templates include:</strong> Pre-configured checklists, typical project durations, estimated costs, and industry best practices for UK building projects
-        </p>
-      </div>
-    </div>
-  </DialogContent>
-</Dialog>
+            </DialogTrigger>
+            <DialogContent className="max-w-[95vw] w-full max-h-[90vh] overflow-y-auto p-0">
+              <DialogHeader className="p-6 pb-4">
+                <DialogTitle className="text-2xl">Choose Project Template</DialogTitle>
+                <DialogDescription className="text-base mt-2">
+                  Select a template to quickly set up your project with industry-standard workflows and checklists
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="px-6 pb-6">
+                <div className="grid grid-cols-1 md:grid-cols-1 2xl:grid-cols-3 gap-8">
+                  {PROJECT_TEMPLATES.map((template) => (
+                    <Card key={template.id} className="h-full flex flex-col hover:shadow-lg transition-all duration-200 border-2 hover:border-blue-300">
+                      <CardHeader className="flex-shrink-0">
+                        <div className="space-y-3">
+                          <div>
+                            <CardTitle className="text-lg leading-tight">{template.name}</CardTitle>
+                            <Badge variant="outline" className="mt-2 text-xs px-2 py-1">
+                              {template.project_type}
+                            </Badge>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      
+                      <CardContent className="flex-1 flex flex-col justify-between space-y-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {template.description}
+                          </p>
+                        </div>
+                        
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <Clock className="w-4 h-4 text-blue-600" />
+                            <span className="text-sm font-medium">~{template.estimated_duration_weeks} weeks</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <PoundSterling className="w-4 h-4 text-green-600" />
+                            <span className="text-sm font-medium">{template.typical_contract_value_range}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <CheckSquare className="w-4 h-4 text-purple-600" />
+                            <span className="text-sm font-medium">{template.checklist_items.length} checklist items</span>
+                          </div>
+                        </div>
+                        
+                        <Button
+                          onClick={() => handleCreateFromTemplate(template)}
+                          className="w-full mt-4"
+                          size="lg"
+                        >
+                          Use This Template
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                
+                <div className="text-center mt-8 p-4 bg-muted/30 rounded-lg">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Templates include:</strong> Pre-configured checklists, typical project durations, estimated costs, and industry best practices for UK building projects
+                  </p>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Create Project Dialog */}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="flex items-center gap-2">
@@ -753,6 +874,21 @@ export default function ProjectsPage() {
         </div>
       </div>
 
+      {/* Project Count Info */}
+      <div className="mb-4">
+        <p className="text-sm text-muted-foreground">
+          {projects.length === 0 
+            ? (isSuperAdmin ? "No projects exist in the system" : "You don't have access to any projects yet")
+            : `Showing ${projects.length} project${projects.length !== 1 ? 's' : ''}`
+          }
+          {isSuperAdmin && projects.length > 0 && (
+            <span className="ml-2 text-purple-600 font-medium">
+              • System-wide view
+            </span>
+          )}
+        </p>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <Card>
@@ -762,6 +898,33 @@ export default function ProjectsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-purple-600">{stats.planning}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">In Progress</CardTitle>
+            <Activity className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{stats.inProgress}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Completed</CardTitle>
+            <CheckSquare className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Projects</CardTitle>
+            <Building2 className="h-4 w-4 text-gray-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-gray-600">{stats.total}</div>
           </CardContent>
         </Card>
         <Card>
@@ -777,373 +940,397 @@ export default function ProjectsPage() {
         </Card>
       </div>
 
-      {/* Bulk Actions */}
-      {selectedProjects.length > 0 && (
-        <Card className="mb-6 border-blue-200 bg-blue-50">
-          <CardContent className="flex items-center justify-between py-4">
-            <div className="flex items-center gap-4">
-              <span className="font-medium">
-                {selectedProjects.length} project{selectedProjects.length !== 1 ? 's' : ''} selected
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedProjects([])}
-              >
-                Clear Selection
-              </Button>
-            </div>
-            <DropdownMenu open={bulkActionOpen} onOpenChange={setBulkActionOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  Bulk Actions
-                  <ChevronDown className="w-4 h-4" />
+      {/* Empty state */}
+      {projects.length === 0 && (
+        <Card className="p-12">
+          <CardContent>
+            <div className="text-center">
+              <FolderOpen className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium mb-2">No projects found</h3>
+              <p className="text-muted-foreground mb-4">
+                {isSuperAdmin 
+                  ? "No projects have been created in the system yet."
+                  : "You haven't been added to any projects yet. Contact your administrator to get access."
+                }
+              </p>
+              {(isSuperAdmin || true) && (
+                <Button onClick={() => setIsDialogOpen(true)}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  {isSuperAdmin ? "Create First Project" : "Request Project Access"}
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem className="font-medium">
-                  Update Status
-                </DropdownMenuItem>
-                {PROJECT_STATUSES.map(status => (
-                  <DropdownMenuItem
-                    key={status}
-                    onClick={() => handleBulkStatusUpdate(status)}
-                    className="pl-6"
-                  >
-                    {status}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={handleBulkDelete}
-                  className="text-red-600"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Selected
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Filters and Search */}
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <div className="flex flex-col lg:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-              <Input
-                placeholder="Search projects, clients, addresses..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            
-            <Select onValueChange={setStatusFilter} value={statusFilter}>
-              <SelectTrigger className="w-full lg:w-48">
-                <Activity className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                {PROJECT_STATUSES.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {status}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select onValueChange={setTypeFilter} value={typeFilter}>
-              <SelectTrigger className="w-full lg:w-48">
-                <Building className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                {PROJECT_TEMPLATES.map(template => (
-                  <SelectItem key={template.project_type} value={template.project_type}>
-                    {template.project_type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select onValueChange={setRegionFilter} value={regionFilter}>
-              <SelectTrigger className="w-full lg:w-48">
-                <MapPin className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by region" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Regions</SelectItem>
-                {UK_REGIONS.map((region) => (
-                  <SelectItem key={region} value={region}>
-                    {region}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select onValueChange={setSortBy} value={sortBy}>
-              <SelectTrigger className="w-full lg:w-48">
-                <BarChart3 className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="created_at">Created Date</SelectItem>
-                <SelectItem value="name">Project Name</SelectItem>
-                <SelectItem value="status">Status</SelectItem>
-                <SelectItem value="start_date">Start Date</SelectItem>
-                <SelectItem value="contract_value">Contract Value</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-
-{/* Projects Table */}
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={selectedProjects.length === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setSelectedProjects(filteredAndSortedProjects.map(p => p.id))
-                      } else {
-                        setSelectedProjects([])
-                      }
-                    }}
-                  />
-                </TableHead>
-                <TableHead className="font-semibold">Project Details</TableHead>
-                <TableHead className="font-semibold">Type & Status</TableHead>
-                <TableHead className="font-semibold">Client & Location</TableHead>
-                <TableHead className="font-semibold">Timeline & Value</TableHead>
-                <TableHead className="w-16"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredAndSortedProjects.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12">
-                    <div className="flex flex-col items-center gap-2">
-                      <Building2 className="w-12 h-12 text-muted-foreground" />
-                      <p className="text-muted-foreground font-medium">No projects found</p>
-                      <p className="text-sm text-muted-foreground">
-                        {projects.length === 0 
-                          ? "Get started by creating your first project or using a template"
-                          : "Try adjusting your search or filter criteria"
-                        }
-                      </p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
-              {filteredAndSortedProjects.map((project) => (
-                <TableRow
-                  key={project.id}
-                  className="hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/projects/${project.id}`)}
-                >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selectedProjects.includes(project.id)}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedProjects([...selectedProjects, project.id])
-                        } else {
-                          setSelectedProjects(selectedProjects.filter(id => id !== project.id))
-                        }
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        {project.name}
-                        {project.template_used && (
-                          <Badge variant="secondary" className="text-xs">
-                            Template
-                          </Badge>
-                        )}
-                      </div>
-                      {project.description && (
-                        <div className="text-sm text-muted-foreground line-clamp-1 max-w-md mt-1">
-                          {project.description}
-                        </div>
-                      )}
-                      {project.contractor && (
-                        <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                          <HardHat className="w-3 h-3" />
-                          {project.contractor}
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-2">
-                      {project.project_type && (
-                        <Badge variant="outline" className="text-xs">
-                          {project.project_type}
-                        </Badge>
-                      )}
-                      <Badge 
-                        variant="outline"
-                        className={`${statusColor(project.status)} flex items-center gap-1 w-fit text-xs`}
+      {/* Show content only if there are projects */}
+      {projects.length > 0 && (
+        <>
+          {/* Bulk Actions */}
+          {selectedProjects.length > 0 && (
+            <Card className="mb-6 border-blue-200 bg-blue-50">
+              <CardContent className="flex items-center justify-between py-4">
+                <div className="flex items-center gap-4">
+                  <span className="font-medium">
+                    {selectedProjects.length} project{selectedProjects.length !== 1 ? 's' : ''} selected
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedProjects([])}
+                  >
+                    Clear Selection
+                  </Button>
+                </div>
+                <DropdownMenu open={bulkActionOpen} onOpenChange={setBulkActionOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="flex items-center gap-2">
+                      <Settings className="w-4 h-4" />
+                      Bulk Actions
+                      <ChevronDown className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem className="font-medium">
+                      Update Status
+                    </DropdownMenuItem>
+                    {PROJECT_STATUSES.map(status => (
+                      <DropdownMenuItem
+                        key={status}
+                        onClick={() => handleBulkStatusUpdate(status)}
+                        className="pl-6"
                       >
-                        {getStatusIcon(project.status)}
-                        {project.status}
-                      </Badge>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-1">
-                      {project.client_name && (
-                        <div className="text-sm font-medium">{project.client_name}</div>
-                      )}
-                      {project.site_address && (
-                        <div className="text-xs text-muted-foreground flex items-start gap-1">
-                          <Home className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                          <span className="line-clamp-2">{project.site_address}</span>
+                        {status}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleBulkDelete}
+                      className="text-red-600"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete Selected
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Filters and Search */}
+          <Card className="mb-6">
+            <CardContent className="pt-6">
+              <div className="flex flex-col lg:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                  <Input
+                    placeholder="Search projects, clients, addresses..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                
+                <Select onValueChange={setStatusFilter} value={statusFilter}>
+                  <SelectTrigger className="w-full lg:w-48">
+                    <Activity className="w-4 h-4 mr-2" />
+                    <SelectValue placeholder="Filter by status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    {PROJECT_STATUSES.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {status}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select onValueChange={setTypeFilter} value={typeFilter}>
+                  <SelectTrigger className="w-full lg:w-48">
+                    <Building className="w-4 h-4 mr-2" />
+                    <SelectValue placeholder="Filter by type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    {PROJECT_TEMPLATES.map(template => (
+                      <SelectItem key={template.project_type} value={template.project_type}>
+                        {template.project_type}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select onValueChange={setRegionFilter} value={regionFilter}>
+                  <SelectTrigger className="w-full lg:w-48">
+                    <MapPin className="w-4 h-4 mr-2" />
+                    <SelectValue placeholder="Filter by region" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Regions</SelectItem>
+                    {UK_REGIONS.map((region) => (
+                      <SelectItem key={region} value={region}>
+                        {region}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select onValueChange={setSortBy} value={sortBy}>
+                  <SelectTrigger className="w-full lg:w-48">
+                    <BarChart3 className="w-4 h-4 mr-2" />
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="created_at">Created Date</SelectItem>
+                    <SelectItem value="name">Project Name</SelectItem>
+                    <SelectItem value="status">Status</SelectItem>
+                    <SelectItem value="start_date">Start Date</SelectItem>
+                    <SelectItem value="contract_value">Contract Value</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Projects Table */}
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-12">
+                      <Checkbox
+                        checked={selectedProjects.length === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedProjects(filteredAndSortedProjects.map(p => p.id))
+                          } else {
+                            setSelectedProjects([])
+                          }
+                        }}
+                      />
+                    </TableHead>
+                    <TableHead className="font-semibold">Project Details</TableHead>
+                    <TableHead className="font-semibold">Type & Status</TableHead>
+                    <TableHead className="font-semibold">Client & Location</TableHead>
+                    <TableHead className="font-semibold">Timeline & Value</TableHead>
+                    <TableHead className="w-16"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAndSortedProjects.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-12">
+                        <div className="flex flex-col items-center gap-2">
+                          <Building2 className="w-12 h-12 text-muted-foreground" />
+                          <p className="text-muted-foreground font-medium">No projects found</p>
+                          <p className="text-sm text-muted-foreground">
+                            Try adjusting your search or filter criteria
+                          </p>
                         </div>
-                      )}
-                      {project.region && (
-                        <div className="text-xs text-muted-foreground flex items-center gap-1">
-                          <MapPin className="w-3 h-3" />
-                          {project.region}
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-1 text-xs">
-                      {project.start_date && (
-                        <div className="flex items-center gap-1">
-                          <CalendarIcon className="w-3 h-3 text-green-600" />
-                          <span>Start: {new Date(project.start_date).toLocaleDateString('en-GB')}</span>
-                        </div>
-                      )}
-                      {project.target_completion && (
-                        <div className="flex items-center gap-1">
-                          <CalendarIcon className="w-3 h-3 text-orange-600" />
-                          <span>End: {new Date(project.target_completion).toLocaleDateString('en-GB')}</span>
-                        </div>
-                      )}
-                      {project.contract_value && (
-                        <div className="flex items-center gap-1 font-medium text-emerald-700">
-                          <PoundSterling className="w-3 h-3" />
-                          <span>£{project.contract_value.toLocaleString()}</span>
-                        </div>
-                      )}
-                      <div className="text-muted-foreground">
-                        Created: {new Date(project.created_at).toLocaleDateString('en-GB')}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="sm">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/projects/${project.id}`)
-                          }}
-                        >
-                          <Eye className="w-4 h-4 mr-2" />
-                          View Project
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/projects/${project.id}/edit`)
-                          }}
-                        >
-                          <Edit className="w-4 h-4 mr-2" />
-                          Edit Details
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/projects/${project.id}/claims`)
-                          }}
-                        >
-                          <FileText className="w-4 h-4 mr-2" />
-                          Manage Claims
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/projects/${project.id}/documents`)
-                          }}
-                        >
-                          <Archive className="w-4 h-4 mr-2" />
-                          Documents
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            // Duplicate project logic would go here
-                          }}
-                        >
-                          <Copy className="w-4 h-4 mr-2" />
-                          Duplicate
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (project.client_contact?.includes('@')) {
-                              window.location.href = `mailto:${project.client_contact}`
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {filteredAndSortedProjects.map((project) => (
+                    <TableRow
+                      key={project.id}
+                      className="hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/projects/${project.id}`)}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedProjects.includes(project.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedProjects([...selectedProjects, project.id])
+                            } else {
+                              setSelectedProjects(selectedProjects.filter(id => id !== project.id))
                             }
                           }}
-                          disabled={!project.client_contact?.includes('@')}
-                        >
-                          <Mail className="w-4 h-4 mr-2" />
-                          Email Client
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            // Delete functionality would go here
-                          }}
-                          className="text-red-600"
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete Project
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <div className="font-medium flex items-center gap-2">
+                            {project.name}
+                            {project.template_used && (
+                              <Badge variant="secondary" className="text-xs">
+                                Template
+                              </Badge>
+                            )}
+                          </div>
+                          {project.description && (
+                            <div className="text-sm text-muted-foreground line-clamp-1 max-w-md mt-1">
+                              {project.description}
+                            </div>
+                          )}
+                          {project.contractor && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                              <HardHat className="w-3 h-3" />
+                              {project.contractor}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-2">
+                          {project.project_type && (
+                            <Badge variant="outline" className="text-xs">
+                              {project.project_type}
+                            </Badge>
+                          )}
+                          <Badge 
+                            variant="outline"
+                            className={`${statusColor(project.status)} flex items-center gap-1 w-fit text-xs`}
+                          >
+                            {getStatusIcon(project.status)}
+                            {project.status}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          {project.client_name && (
+                            <div className="text-sm font-medium">{project.client_name}</div>
+                          )}
+                          {project.site_address && (
+                            <div className="text-xs text-muted-foreground flex items-start gap-1">
+                              <Home className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                              <span className="line-clamp-2">{project.site_address}</span>
+                            </div>
+                          )}
+                          {project.region && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {project.region}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 text-xs">
+                          {project.start_date && (
+                            <div className="flex items-center gap-1">
+                              <CalendarIcon className="w-3 h-3 text-green-600" />
+                              <span>Start: {new Date(project.start_date).toLocaleDateString('en-GB')}</span>
+                            </div>
+                          )}
+                          {project.target_completion && (
+                            <div className="flex items-center gap-1">
+                              <CalendarIcon className="w-3 h-3 text-orange-600" />
+                              <span>End: {new Date(project.target_completion).toLocaleDateString('en-GB')}</span>
+                            </div>
+                          )}
+                          {project.contract_value && (
+                            <div className="flex items-center gap-1 font-medium text-emerald-700">
+                              <PoundSterling className="w-3 h-3" />
+                              <span>£{project.contract_value.toLocaleString()}</span>
+                            </div>
+                          )}
+                          <div className="text-muted-foreground">
+                            Created: {new Date(project.created_at).toLocaleDateString('en-GB')}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                router.push(`/projects/${project.id}`)
+                              }}
+                            >
+                              <Eye className="w-4 h-4 mr-2" />
+                              View Project
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                router.push(`/projects/${project.id}/edit`)
+                              }}
+                            >
+                              <Edit className="w-4 h-4 mr-2" />
+                              Edit Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                router.push(`/projects/${project.id}/claims`)
+                              }}
+                            >
+                              <FileText className="w-4 h-4 mr-2" />
+                              Manage Claims
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                router.push(`/projects/${project.id}/documents`)
+                              }}
+                            >
+                              <Archive className="w-4 h-4 mr-2" />
+                              Documents
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                // Duplicate project logic would go here
+                              }}
+                            >
+                              <Copy className="w-4 h-4 mr-2" />
+                              Duplicate
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (project.client_contact?.includes('@')) {
+                                  window.location.href = `mailto:${project.client_contact}`
+                                }
+                              }}
+                              disabled={!project.client_contact?.includes('@')}
+                            >
+                              <Mail className="w-4 h-4 mr-2" />
+                              Email Client
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                // Delete functionality would go here
+                              }}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Project
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
 
-      {/* Results summary */}
-      {filteredAndSortedProjects.length > 0 && (
-        <div className="mt-4 text-sm text-muted-foreground text-center">
-          Showing {filteredAndSortedProjects.length} of {projects.length} projects
-          {stats.totalValue > 0 && (
-            <span className="ml-4">
-              • Total value: £{stats.totalValue.toLocaleString()}
-            </span>
-          )}
-        </div>
+          {/* Results summary */}
+          <div className="mt-4 text-sm text-muted-foreground text-center">
+            Showing {filteredAndSortedProjects.length} of {projects.length} projects
+            {stats.totalValue > 0 && (
+              <span className="ml-4">
+                • Total value: £{stats.totalValue.toLocaleString()}
+              </span>
+            )}
+          </div>
+        </>
       )}
     </div>
   )
