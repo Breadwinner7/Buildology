@@ -9,7 +9,9 @@ import { ProjectProgressTracker } from '@/components/features/projects/ProjectPr
 import { HoldStatusBanner } from '@/components/features/projects/HoldStatusBanner'
 import { ProjectOverviewPanel } from '@/components/features/projects/ProjectOverviewPanel'
 import { ProjectDetailsCard } from '@/components/features/projects/ProjectDetailsCard'
-import DocumentsModule from '@/components/features/documents/DocumentsModule' // Add this import
+import DocumentsModule from '@/components/features/documents/DocumentsModule'
+import { ProjectFinancialDashboard } from '@/components/financials/ProjectFinancialDashboard';
+
 import { 
   Calendar, MapPin, PoundSterling, Clock, User, 
   AlertTriangle, ArrowLeft, Settings, Download, Share, 

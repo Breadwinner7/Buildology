@@ -23,7 +23,7 @@ import {
   Download,
   DollarSign
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabaseClient';
 
 // Enhanced types matching your database schema
 interface ProjectFinancials {

@@ -1,683 +1,421 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useUser } from '@/hooks/useUser'
-import { supabase } from '@/lib/supabaseClient'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Skeleton } from '@/components/ui/skeleton'
 import { 
-  TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle2, 
-  Building2, Users, Calendar, PoundSterling, MessageSquare,
-  FileText, Camera, MapPin, Phone, Mail, Settings, Plus,
-  Activity, Target, Zap, BarChart3, ArrowRight, RefreshCw,
-  Bell, Star, Filter, Search, Download, Eye, HardHat,
-  Wrench, Home, AlertCircle, CheckSquare, UserCircle,
-  DollarSign, Percent, Calculator, TrendingDown as Warning
+  PoundSterling, 
+  TrendingUp, 
+  TrendingDown, 
+  Building2,
+  Calculator,
+  CheckSquare,
+  Clock,
+  RefreshCw,
+  AlertTriangle,
+  FileText,
+  MessageSquare,
+  Calendar,
+  Users,
+  ArrowUpRight,
+  Plus,
+  Activity,
+  Target,
+  BarChart3
 } from 'lucide-react'
-import Link from 'next/link'
+import { supabase } from '@/lib/supabaseClient'
 import { cn } from '@/lib/utils'
-import { format } from 'date-fns'
+import Link from 'next/link'
 
-// Types for real data
-interface ProjectFinancial {
-  id: string
-  project_id: string
-  budget_total: number
-  budget_allocated: number
-  budget_spent: number
-  budget_remaining: number
-  currency: string
-  last_updated: string
+// Types
+interface DashboardOverview {
   projects: {
-    name: string
-    status: string
-    client_name?: string
+    total: number
+    active: number
+    completed: number
+    onHold: number
+  }
+  finances: {
+    totalBudget: number
+    totalSpent: number
+    utilizationRate: number
+    averageProjectValue: number
+  }
+  tasks: {
+    total: number
+    pending: number
+    overdue: number
+    completedThisWeek: number
+  }
+  communications: {
+    unreadMessages: number
+    activeThreads: number
+    recentActivity: number
+  }
+  alerts: {
+    overdueInvoices: number
+    pendingQuotes: number
+    criticalIssues: number
+    upcomingDeadlines: number
   }
 }
 
-interface DashboardMetrics {
-  totalProjects: number
-  activeProjects: number
-  totalBudget: number
-  totalSpent: number
-  totalRemaining: number
-  pendingTasks: number
-  overdueTasks: number
-  recentMessages: number
-  criticalIssues: number
-}
-
-interface KPIData {
-  label: string
-  value: string
-  change: string
-  trend: 'up' | 'down'
+interface RecentActivity {
+  id: string
+  type: 'project' | 'task' | 'message' | 'financial'
+  title: string
   description: string
+  timestamp: string
+  status?: string
+  priority?: 'low' | 'normal' | 'high' | 'critical'
+}
+
+// API Functions
+const fetchDashboardOverview = async (): Promise<DashboardOverview> => {
+  try {
+    // Fetch all projects with their status
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, status, created_at')
+
+    // Fetch financial summaries
+    const { data: financials } = await supabase
+      .from('project_financials')
+      .select('budget_total, budget_spent')
+
+    // Fetch tasks
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, status, due_date, created_at')
+
+    // Fetch messages/threads
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    const { data: threads } = await supabase
+      .from('threads')
+      .select('id')
+
+    // Fetch invoices for alerts
+    const { data: invoices } = await supabase
+      .from('invoices')
+      .select('id, status, due_date')
+
+    // Fetch quotes for alerts
+    const { data: quotes } = await supabase
+      .from('quotes')
+      .select('id, status')
+
+    // Calculate project metrics
+    const totalProjects = projects?.length || 0
+    const activeProjects = projects?.filter(p => 
+      ['works_in_progress', 'survey_booked', 'planning', 'awaiting_agreement'].includes(p.status)
+    ).length || 0
+    const completedProjects = projects?.filter(p => p.status === 'closed').length || 0
+    const onHoldProjects = projects?.filter(p => p.status === 'on_hold').length || 0
+
+    // Calculate financial metrics
+    const totalBudget = financials?.reduce((sum, f) => sum + (f.budget_total || 0), 0) || 0
+    const totalSpent = financials?.reduce((sum, f) => sum + (f.budget_spent || 0), 0) || 0
+    const utilizationRate = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0
+    const averageProjectValue = financials?.length ? totalBudget / financials.length : 0
+
+    // Calculate task metrics
+    const totalTasks = tasks?.length || 0
+    const pendingTasks = tasks?.filter(t => t.status !== 'done').length || 0
+    const overdueTasks = tasks?.filter(t => 
+      t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
+    ).length || 0
+    const completedThisWeek = tasks?.filter(t => 
+      t.status === 'done' && 
+      new Date(t.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    ).length || 0
+
+    // Calculate communication metrics
+    const unreadMessages = 0 // TODO: implement when read status is available
+    const activeThreads = threads?.length || 0
+    const recentActivity = messages?.filter(m => 
+      new Date(m.created_at) > new Date(Date.now() - 24 * 60 * 60 * 1000)
+    ).length || 0
+
+    // Calculate alerts
+    const overdueInvoices = invoices?.filter(i => 
+      i.status === 'overdue' || (i.status === 'sent' && new Date(i.due_date) < new Date())
+    ).length || 0
+    const pendingQuotes = quotes?.filter(q => q.status === 'submitted').length || 0
+    const criticalIssues = overdueTasks + overdueInvoices
+    const upcomingDeadlines = tasks?.filter(t => {
+      if (!t.due_date || t.status === 'done') return false
+      const dueDate = new Date(t.due_date)
+      const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+      return dueDate <= threeDaysFromNow && dueDate > new Date()
+    }).length || 0
+
+    return {
+      projects: {
+        total: totalProjects,
+        active: activeProjects,
+        completed: completedProjects,
+        onHold: onHoldProjects
+      },
+      finances: {
+        totalBudget,
+        totalSpent,
+        utilizationRate,
+        averageProjectValue
+      },
+      tasks: {
+        total: totalTasks,
+        pending: pendingTasks,
+        overdue: overdueTasks,
+        completedThisWeek
+      },
+      communications: {
+        unreadMessages,
+        activeThreads,
+        recentActivity
+      },
+      alerts: {
+        overdueInvoices,
+        pendingQuotes,
+        criticalIssues,
+        upcomingDeadlines
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching dashboard overview:', error)
+    // Return empty state on error
+    return {
+      projects: { total: 0, active: 0, completed: 0, onHold: 0 },
+      finances: { totalBudget: 0, totalSpent: 0, utilizationRate: 0, averageProjectValue: 0 },
+      tasks: { total: 0, pending: 0, overdue: 0, completedThisWeek: 0 },
+      communications: { unreadMessages: 0, activeThreads: 0, recentActivity: 0 },
+      alerts: { overdueInvoices: 0, pendingQuotes: 0, criticalIssues: 0, upcomingDeadlines: 0 }
+    }
+  }
+}
+
+const fetchRecentActivity = async (): Promise<RecentActivity[]> => {
+  try {
+    // This would typically combine multiple tables, for now just return recent projects
+    const { data: recentProjects } = await supabase
+      .from('projects')
+      .select('id, name, status, created_at, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(5)
+
+    return recentProjects?.map(project => ({
+      id: project.id,
+      type: 'project' as const,
+      title: project.name,
+      description: `Status: ${project.status}`,
+      timestamp: project.updated_at || project.created_at,
+      status: project.status
+    })) || []
+  } catch (error) {
+    console.error('Error fetching recent activity:', error)
+    return []
+  }
+}
+
+// Utility functions
+const formatCurrency = (amount: number) => {
+  if (amount >= 1000000) {
+    return `£${(amount / 1000000).toFixed(1)}M`
+  } else if (amount >= 1000) {
+    return `£${(amount / 1000).toFixed(0)}k`
+  }
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP'
+  }).format(amount)
+}
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'works_in_progress':
+    case 'active':
+      return 'bg-green-100 text-green-800'
+    case 'planning':
+    case 'survey_booked':
+      return 'bg-blue-100 text-blue-800'
+    case 'on_hold':
+      return 'bg-yellow-100 text-yellow-800'
+    case 'closed':
+    case 'completed':
+      return 'bg-gray-100 text-gray-800'
+    default:
+      return 'bg-gray-100 text-gray-800'
+  }
+}
+
+// Quick Stats Card Component
+interface QuickStatsCardProps {
+  title: string
+  value: string | number
+  subtitle?: string
+  trend?: { direction: 'up' | 'down'; value: string }
+  icon: React.ReactNode
   color: string
+  href?: string
 }
 
-// Custom hooks for real data with better error handling
-function useFinancialData() {
-  const [financials, setFinancials] = useState<ProjectFinancial[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    async function fetchFinancials() {
-      try {
-        setError(null)
-        
-        // First check if table exists and has data
-        const { data, error } = await supabase
-          .from('project_financials')
-          .select(`
-            id,
-            project_id,
-            budget_total,
-            budget_allocated,
-            budget_spent,
-            budget_remaining,
-            currency,
-            last_updated,
-            projects!inner (
-              name,
-              status,
-              client_name
-            )
-          `)
-          .order('last_updated', { ascending: false })
-          .limit(10)
-
-        if (error) {
-          console.error('Supabase error:', error)
-          
-          // If table doesn't exist, provide fallback
-          if (error.message?.includes('relation "project_financials" does not exist')) {
-            setError('Project financials table not found - using sample data')
-            setFinancials([])
-          } else {
-            setError(`Database error: ${error.message}`)
-          }
-        } else {
-          setFinancials(data || [])
-        }
-      } catch (err) {
-        console.error('Error fetching financial data:', err)
-        setError(err instanceof Error ? err.message : 'Failed to fetch financial data')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchFinancials()
-  }, [])
-
-  return { financials, loading, error, refetch: () => setLoading(true) }
-}
-
-function useDashboardMetrics() {
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    async function fetchMetrics() {
-      try {
-        setError(null)
-        
-        // Fetch basic project data (this table definitely exists)
-        const { data: projects, error: projectsError } = await supabase
-          .from('projects')
-          .select('id, status, created_at')
-
-        if (projectsError) {
-          throw new Error(`Projects error: ${projectsError.message}`)
-        }
-
-        // Fetch tasks data
-        const { data: tasks, error: tasksError } = await supabase
-          .from('tasks')
-          .select('id, status, due_date, created_at')
-
-        if (tasksError) {
-          console.warn('Tasks error:', tasksError.message)
-        }
-
-        // Fetch messages data
-        const { data: messages, error: messagesError } = await supabase
-          .from('messages')
-          .select('id, read_status, created_at')
-
-        if (messagesError) {
-          console.warn('Messages error:', messagesError.message)
-        }
-
-        // Try to fetch financial data for totals
-        const { data: financialData, error: financialError } = await supabase
-          .from('project_financials')
-          .select('budget_total, budget_spent, budget_remaining')
-
-        if (financialError) {
-          console.warn('Financial data not available:', financialError.message)
-        }
-
-        // Calculate metrics from available data
-        const totalProjects = projects?.length || 0
-        const activeProjects = projects?.filter(p => 
-          ['In Progress', 'Active', 'Works In Progress'].includes(p.status)
-        ).length || 0
-
-        const totalBudget = financialData?.reduce((sum, f) => sum + (f.budget_total || 0), 0) || 0
-        const totalSpent = financialData?.reduce((sum, f) => sum + (f.budget_spent || 0), 0) || 0
-        const totalRemaining = financialData?.reduce((sum, f) => sum + (f.budget_remaining || 0), 0) || 0
-
-        // Calculate task metrics
-        const now = new Date()
-        const overdueTasks = tasks?.filter(task => {
-          if (!task.due_date || task.status === 'completed') return false
-          return new Date(task.due_date) < now
-        }).length || 0
-
-        const pendingTasks = tasks?.filter(task => 
-          task.status !== 'completed' && task.status !== 'done'
-        ).length || 0
-
-        // Calculate message metrics
-        const recentMessages = messages?.filter(msg => {
-          const msgDate = new Date(msg.created_at)
-          const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-          return msgDate > dayAgo
-        }).length || 0
-
-        setMetrics({
-          totalProjects,
-          activeProjects,
-          totalBudget,
-          totalSpent,
-          totalRemaining,
-          pendingTasks,
-          overdueTasks,
-          recentMessages,
-          criticalIssues: overdueTasks // For now, overdue tasks are critical issues
-        })
-      } catch (error) {
-        console.error('Error fetching dashboard metrics:', error)
-        setError(error instanceof Error ? error.message : 'Failed to fetch metrics')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchMetrics()
-  }, [])
-
-  return { metrics, loading, error, refetch: () => setLoading(true) }
-}
-
-// Enhanced Dashboard Components
-export default function DashboardPage() {
-  const { user } = useUser()
-  const { financials, loading: financialsLoading, error: financialsError } = useFinancialData()
-  const { metrics, loading: metricsLoading, error: metricsError } = useDashboardMetrics()
-  const [refreshing, setRefreshing] = useState(false)
-
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    // Simple refresh - reload the page
-    setTimeout(() => {
-      window.location.reload()
-    }, 1000)
-  }
-
-  if (metricsLoading || financialsLoading) {
-    return <DashboardSkeleton />
-  }
-
-  // Show errors but don't crash the page
-  const hasErrors = financialsError || metricsError
+const QuickStatsCard: React.FC<QuickStatsCardProps> = ({
+  title,
+  value,
+  subtitle,
+  trend,
+  icon,
+  color,
+  href
+}) => {
+  const CardComponent = href ? Link : 'div'
+  const cardProps = href ? { href } : {}
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-        {/* Enhanced Header */}
-        <DashboardHeader user={user} onRefresh={handleRefresh} refreshing={refreshing} />
-
-        {/* Error Display */}
-        {hasErrors && (
-          <Card className="border-orange-200 bg-orange-50">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-2 text-orange-800">
-                <AlertTriangle className="w-5 h-5" />
-                <div>
-                  <p className="font-medium">Database Connection Issues</p>
-                  {financialsError && <p className="text-sm">{financialsError}</p>}
-                  {metricsError && <p className="text-sm">{metricsError}</p>}
-                  <p className="text-sm">Showing available data with sample metrics.</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Real Financial KPIs */}
-        <RealFinancialKPIGrid metrics={metrics} hasErrors={hasErrors} />
-
-        {/* Financial Overview Cards */}
-        <FinancialOverviewCards financials={financials} />
-
-        {/* Main Dashboard Grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2 space-y-6">
-            <RealProjectOverview />
-            <ProjectFinancialChart financials={financials} />
+    <CardComponent {...cardProps} className={href ? "block" : ""}>
+      <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">{title}</p>
+              <p className="text-2xl font-bold">{value}</p>
+              {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+            </div>
+            <div className={cn("p-3 rounded-full", color.replace('text-', 'bg-').replace('-600', '-100'))}>
+              {icon}
+            </div>
           </div>
-          <div className="space-y-6">
-            <QuickActions />
-            <RecentActivity />
-            <FinancialAlerts financials={financials} />
+          {trend && (
+            <div className="flex items-center mt-4 text-sm">
+              {trend.direction === 'up' ? (
+                <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
+              ) : (
+                <TrendingDown className="w-4 h-4 text-red-600 mr-1" />
+              )}
+              <span className={trend.direction === 'up' ? 'text-green-600' : 'text-red-600'}>
+                {trend.value}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </CardComponent>
+  )
+}
+
+// Project Status Overview Component
+const ProjectStatusOverview: React.FC<{ projects: DashboardOverview['projects'] }> = ({ projects }) => {
+  const total = projects.total
+  const activePercentage = total > 0 ? (projects.active / total) * 100 : 0
+  const completedPercentage = total > 0 ? (projects.completed / total) * 100 : 0
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Project Status Overview</CardTitle>
+        <CardDescription>{total} total projects</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="text-center space-y-2">
+            <p className="text-3xl font-bold text-green-600">{projects.active}</p>
+            <p className="text-sm text-muted-foreground">Active</p>
+          </div>
+          <div className="text-center space-y-2">
+            <p className="text-3xl font-bold text-blue-600">{projects.completed}</p>
+            <p className="text-sm text-muted-foreground">Completed</p>
           </div>
         </div>
-      </div>
-    </div>
-  )
-}
 
-// Real Financial KPI Grid with error handling
-function RealFinancialKPIGrid({ 
-  metrics, 
-  hasErrors 
-}: { 
-  metrics: DashboardMetrics | null
-  hasErrors: boolean 
-}) {
-  if (!metrics) return <KPISkeleton />
+        <div className="space-y-3">
+          <div className="flex justify-between text-sm">
+            <span>Active Projects</span>
+            <span>{activePercentage.toFixed(0)}%</span>
+          </div>
+          <Progress value={activePercentage} className="h-2" />
+          
+          <div className="flex justify-between text-sm">
+            <span>Completion Rate</span>
+            <span>{completedPercentage.toFixed(0)}%</span>
+          </div>
+          <Progress value={completedPercentage} className="h-2" />
+        </div>
 
-  // Use sample data if we have errors
-  const kpis: KPIData[] = hasErrors ? [
-    {
-      label: "Total Projects",
-      value: "12",
-      change: "+2 this month",
-      trend: "up",
-      description: "Active projects in system",
-      color: "bg-blue-500"
-    },
-    {
-      label: "Project Status",
-      value: "8",
-      change: "In progress",
-      trend: "up",
-      description: "Currently active",
-      color: "bg-green-500"
-    },
-    {
-      label: "Pending Tasks",
-      value: "24",
-      change: "3 overdue",
-      trend: "down",
-      description: "Requiring attention",
-      color: "bg-orange-500"
-    },
-    {
-      label: "Team Messages",
-      value: "18",
-      change: "Today",
-      trend: "up",
-      description: "Recent activity",
-      color: "bg-purple-500"
-    }
-  ] : [
-    {
-      label: "Total Budget",
-      value: metrics.totalBudget > 0 ? `£${(metrics.totalBudget / 1000).toFixed(0)}k` : "£0",
-      change: "+5.2%",
-      trend: "up",
-      description: "Across all active projects",
-      color: "bg-blue-500"
-    },
-    {
-      label: "Budget Spent",
-      value: metrics.totalSpent > 0 ? `£${(metrics.totalSpent / 1000).toFixed(0)}k` : "£0",
-      change: metrics.totalBudget > 0 ? `${((metrics.totalSpent / metrics.totalBudget) * 100).toFixed(1)}%` : "0%",
-      trend: metrics.totalSpent > metrics.totalBudget * 0.8 ? "down" : "up",
-      description: "Of total allocated budget",
-      color: "bg-orange-500"
-    },
-    {
-      label: "Active Projects",
-      value: metrics.activeProjects.toString(),
-      change: `${metrics.totalProjects} total`,
-      trend: "up",
-      description: "Projects in progress",
-      color: "bg-green-500"
-    },
-    {
-      label: "Pending Tasks",
-      value: metrics.pendingTasks.toString(),
-      change: `${metrics.overdueTasks} overdue`,
-      trend: metrics.overdueTasks > 0 ? "down" : "up",
-      description: "Requiring attention",
-      color: metrics.overdueTasks > 0 ? "bg-red-500" : "bg-purple-500"
-    }
-  ]
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-      {kpis.map((kpi, index) => (
-        <Card key={index} className="relative overflow-hidden border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-          <div className={cn("absolute top-0 left-0 w-1 h-full", kpi.color)} />
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className={cn("p-2 rounded-lg", kpi.color.replace('bg-', 'bg-').replace('-500', '-100'))}>
-                {index === 0 && <PoundSterling className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
-                {index === 1 && <Calculator className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
-                {index === 2 && <Building2 className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
-                {index === 3 && <CheckSquare className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
-              </div>
-              <div className="flex items-center gap-1 text-sm">
-                {kpi.trend === 'up' ? (
-                  <TrendingUp className="w-3 h-3 text-green-600" />
-                ) : (
-                  <TrendingDown className="w-3 h-3 text-red-600" />
-                )}
-                <span className={kpi.trend === 'up' ? 'text-green-600' : 'text-red-600'}>
-                  {kpi.change}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <p className="text-2xl font-bold">{kpi.value}</p>
-              <p className="text-xs font-medium">{kpi.label}</p>
-              <p className="text-xs opacity-70">{kpi.description}</p>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
-}
-
-// Financial Overview Cards
-function FinancialOverviewCards({ financials }: { financials: ProjectFinancial[] }) {
-  const totalProjects = financials.length
-  const healthyProjects = financials.filter(f => f.budget_remaining > 0).length
-  const atRiskProjects = financials.filter(f => f.budget_remaining < 0).length
-  const avgBudgetUtilization = financials.length > 0 
-    ? financials.reduce((sum, f) => sum + ((f.budget_spent / f.budget_total) * 100), 0) / financials.length 
-    : 0
-
-  // Show cards even if no financial data
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <Card className="border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-50">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-green-800">Healthy Projects</p>
-              <p className="text-3xl font-bold text-green-900">{healthyProjects}</p>
-              <p className="text-xs text-green-600">Within budget</p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-full">
-              <CheckCircle2 className="w-6 h-6 text-green-600" />
+        {projects.onHold > 0 && (
+          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-yellow-600" />
+              <span className="text-sm font-medium text-yellow-800">
+                {projects.onHold} project{projects.onHold !== 1 ? 's' : ''} on hold
+              </span>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
 
-      <Card className="border-0 shadow-lg bg-gradient-to-br from-red-50 to-pink-50">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-red-800">At Risk Projects</p>
-              <p className="text-3xl font-bold text-red-900">{atRiskProjects}</p>
-              <p className="text-xs text-red-600">Over budget</p>
-            </div>
-            <div className="p-3 bg-red-100 rounded-full">
-              <AlertTriangle className="w-6 h-6 text-red-600" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-indigo-50">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-blue-800">Avg Budget Used</p>
-              <p className="text-3xl font-bold text-blue-900">{avgBudgetUtilization.toFixed(1)}%</p>
-              <p className="text-xs text-blue-600">Across all projects</p>
-            </div>
-            <div className="p-3 bg-blue-100 rounded-full">
-              <Percent className="w-6 h-6 text-blue-600" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-// Real Project Overview (replacing mock data)
-function RealProjectOverview() {
-  const [projects, setProjects] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    async function fetchProjects() {
-      try {
-        const { data, error } = await supabase
-          .from('projects')
-          .select(`
-            id,
-            name,
-            status,
-            client_name,
-            created_at,
-            target_completion
-          `)
-          .order('created_at', { ascending: false })
-          .limit(6)
-
-        if (error) {
-          console.error('Error fetching projects:', error)
-        } else {
-          setProjects(data || [])
-        }
-      } catch (error) {
-        console.error('Project fetch error:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchProjects()
-  }, [])
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'In Progress': case 'Works In Progress': return 'bg-blue-100 text-blue-800 border-blue-200'
-      case 'Planning': return 'bg-purple-100 text-purple-800 border-purple-200'
-      case 'Survey': case 'Survey Booked': return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'Complete': case 'Closed': return 'bg-green-100 text-green-800 border-green-200'
-      default: return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="p-6">
-          <Skeleton className="h-48 w-full" />
-        </CardContent>
-      </Card>
-    )
-  }
-
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="w-5 h-5" />
-              Recent Projects
-            </CardTitle>
-            <CardDescription>Latest project updates and status</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" asChild>
+        <div className="flex gap-2">
+          <Button asChild size="sm" className="flex-1">
             <Link href="/projects">
-              View All
-              <ArrowRight className="w-4 h-4 ml-2" />
+              <Building2 className="w-4 h-4 mr-2" />
+              View All Projects
             </Link>
           </Button>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {projects.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p>No projects found</p>
-          </div>
-        ) : (
-          projects.map((project) => (
-            <div key={project.id} className="p-4 rounded-lg border bg-white hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1 min-w-0">
-                  <Link href={`/projects/${project.id}`} className="hover:underline">
-                    <h4 className="font-medium text-sm truncate">{project.name}</h4>
-                  </Link>
-                  <p className="text-xs text-muted-foreground mt-1">{project.client_name || 'No client specified'}</p>
-                </div>
-                <Badge className={cn("text-xs border", getStatusColor(project.status))}>
-                  {project.status}
-                </Badge>
-              </div>
-              
-              <div className="text-xs text-muted-foreground">
-                Created: {format(new Date(project.created_at), 'dd/MM/yyyy')}
-                {project.target_completion && (
-                  <span className="ml-2">
-                    • Due: {format(new Date(project.target_completion), 'dd/MM/yyyy')}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))
-        )}
       </CardContent>
     </Card>
   )
 }
 
-// Project Financial Chart Component
-function ProjectFinancialChart({ financials }: { financials: ProjectFinancial[] }) {
-  if (financials.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5" />
-            Financial Overview
-          </CardTitle>
-          <CardDescription>Budget vs spending across projects</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8 text-muted-foreground">
-            <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p>No financial data available</p>
-            <p className="text-xs">Financial tracking will appear here once data is added</p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const chartData = financials.slice(0, 6).map(f => ({
-    name: f.projects?.name?.substring(0, 20) + '...' || 'Unknown Project',
-    budget: f.budget_total / 1000,
-    spent: f.budget_spent / 1000,
-    remaining: f.budget_remaining / 1000
-  }))
-
+// Recent Activity Component
+const RecentActivityCard: React.FC<{ activities: RecentActivity[] }> = ({ activities }) => {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5" />
-          Financial Overview
-        </CardTitle>
-        <CardDescription>Budget vs spending across projects</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {chartData.map((project, index) => (
-            <div key={index} className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="font-medium">{project.name}</span>
-                <span className="text-muted-foreground">£{project.budget.toFixed(0)}k budget</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-3 relative overflow-hidden">
-                <div 
-                  className="bg-blue-500 h-3 rounded-full transition-all duration-300"
-                  style={{ width: `${Math.min((project.spent / project.budget) * 100, 100)}%` }}
-                />
-                {project.spent > project.budget && (
-                  <div 
-                    className="bg-red-500 h-3 absolute top-0 rounded-full"
-                    style={{ 
-                      left: '100%',
-                      width: `${Math.min(((project.spent - project.budget) / project.budget) * 100, 50)}%`
-                    }}
-                  />
-                )}
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Spent: £{project.spent.toFixed(0)}k</span>
-                <span className={project.remaining < 0 ? 'text-red-600' : 'text-green-600'}>
-                  {project.remaining < 0 ? 'Over by ' : 'Remaining: '}£{Math.abs(project.remaining).toFixed(0)}k
-                </span>
-              </div>
-            </div>
-          ))}
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle>Recent Activity</CardTitle>
+          <CardDescription>Latest updates across all projects</CardDescription>
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Financial Alerts Component
-function FinancialAlerts({ financials }: { financials: ProjectFinancial[] }) {
-  const alerts = financials.filter(f => f.budget_remaining < 0 || (f.budget_spent / f.budget_total) > 0.9)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-orange-500" />
-          Financial Alerts
-        </CardTitle>
-        <CardDescription>{alerts.length} projects need attention</CardDescription>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/activity">
+            <Activity className="w-4 h-4 mr-2" />
+            View All
+          </Link>
+        </Button>
       </CardHeader>
       <CardContent>
-        {alerts.length === 0 ? (
-          <div className="text-center text-muted-foreground py-4">
-            <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-green-500" />
-            <p className="text-sm">All projects within budget</p>
+        {activities.length === 0 ? (
+          <div className="text-center py-6 text-muted-foreground">
+            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>No recent activity</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {alerts.slice(0, 5).map((alert) => (
-              <div key={alert.id} className="p-3 rounded-lg border-l-4 border-orange-500 bg-orange-50">
-                <h4 className="font-medium text-sm">{alert.projects?.name}</h4>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {alert.budget_remaining < 0 
-                    ? `Over budget by £${Math.abs(alert.budget_remaining).toLocaleString()}`
-                    : `${((alert.budget_spent / alert.budget_total) * 100).toFixed(1)}% budget used`
-                  }
-                </p>
+            {activities.map((activity) => (
+              <div key={activity.id} className="flex items-start gap-3 p-3 border rounded-lg">
+                <div className="p-1 bg-blue-100 rounded">
+                  {activity.type === 'project' && <Building2 className="w-3 h-3 text-blue-600" />}
+                  {activity.type === 'task' && <CheckSquare className="w-3 h-3 text-green-600" />}
+                  {activity.type === 'message' && <MessageSquare className="w-3 h-3 text-purple-600" />}
+                  {activity.type === 'financial' && <PoundSterling className="w-3 h-3 text-orange-600" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{activity.title}</p>
+                  <p className="text-xs text-muted-foreground">{activity.description}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {new Date(activity.timestamp).toLocaleDateString('en-GB')}
+                  </p>
+                </div>
+                {activity.status && (
+                  <Badge className={getStatusColor(activity.status)} variant="secondary">
+                    {activity.status}
+                  </Badge>
+                )}
               </div>
             ))}
           </div>
@@ -687,133 +425,185 @@ function FinancialAlerts({ financials }: { financials: ProjectFinancial[] }) {
   )
 }
 
-// Enhanced Header Component
-function DashboardHeader({ user, onRefresh, refreshing }: any) {
+// Quick Actions Component
+const QuickActionsCard: React.FC = () => {
   return (
-    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <div>
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-900 to-blue-800 bg-clip-text text-transparent">
-          Welcome back, {user?.first_name || 'User'}
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Here's your Buildology platform overview for {format(new Date(), 'EEEE, MMMM do')}
-        </p>
+    <Card>
+      <CardHeader>
+        <CardTitle>Quick Actions</CardTitle>
+        <CardDescription>Common tasks and shortcuts</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Button asChild className="w-full justify-start">
+          <Link href="/projects?action=create">
+            <Plus className="w-4 h-4 mr-2" />
+            Create New Project
+          </Link>
+        </Button>
+        
+        <Button asChild variant="outline" className="w-full justify-start">
+          <Link href="/tasks">
+            <CheckSquare className="w-4 h-4 mr-2" />
+            View All Tasks
+          </Link>
+        </Button>
+        
+        <Button asChild variant="outline" className="w-full justify-start">
+          <Link href="/financials">
+            <PoundSterling className="w-4 h-4 mr-2" />
+            Financial Overview
+          </Link>
+        </Button>
+        
+        <Button asChild variant="outline" className="w-full justify-start">
+          <Link href="/messages">
+            <MessageSquare className="w-4 h-4 mr-2" />
+            View Messages
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Main Dashboard Component
+export default function OverviewDashboard() {
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Data fetching
+  const { data: overview, isLoading: overviewLoading, refetch: refetchOverview } = useQuery({
+    queryKey: ['dashboard-overview'],
+    queryFn: fetchDashboardOverview,
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    refetchInterval: 5 * 60 * 1000 // Auto-refresh every 5 minutes
+  })
+
+  const { data: recentActivity = [], isLoading: activityLoading, refetch: refetchActivity } = useQuery({
+    queryKey: ['recent-activity'],
+    queryFn: fetchRecentActivity,
+    staleTime: 1 * 60 * 1000 // 1 minute
+  })
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([refetchOverview(), refetchActivity()])
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const isLoading = overviewLoading || activityLoading
+
+  if (isLoading) {
+    return (
+      <div className="p-6 max-w-screen-2xl mx-auto">
+        <div className="animate-pulse space-y-6">
+          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-32 bg-gray-200 rounded"></div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="h-64 bg-gray-200 rounded"></div>
+            <div className="h-64 bg-gray-200 rounded"></div>
+            <div className="h-64 bg-gray-200 rounded"></div>
+          </div>
+        </div>
       </div>
-      
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+    )
+  }
+
+  return (
+    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Overview of all your construction projects and activities
+          </p>
+        </div>
+        <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
           <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
           {refreshing ? 'Refreshing...' : 'Refresh'}
         </Button>
-        <Button size="sm" asChild>
-          <Link href="/projects/new">
-            <Plus className="w-4 h-4 mr-2" />
-            New Project
-          </Link>
-        </Button>
       </div>
-    </div>
-  )
-}
 
-// Quick Actions (keeping from original)
-function QuickActions() {
-  const actions = [
-    { label: 'New Project', icon: Plus, color: 'blue', href: '/projects/new' },
-    { label: 'Schedule Survey', icon: Calendar, color: 'green', href: '/surveys/new' },
-    { label: 'Upload Documents', icon: Camera, color: 'orange', href: '/documents/upload' },
-    { label: 'Send Invoice', icon: FileText, color: 'purple', href: '/invoices/new' },
-  ]
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Zap className="w-5 h-5" />
-          Quick Actions
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3">
-        {actions.map((action) => (
-          <Link key={action.label} href={action.href}>
-            <Button variant="outline" className="w-full h-16 flex flex-col gap-2">
-              <action.icon className="w-5 h-5" />
-              <span className="text-xs">{action.label}</span>
-            </Button>
-          </Link>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-// Recent Activity (keeping from original but could be enhanced)
-function RecentActivity() {
-  const activities = [
-    { type: 'project', message: 'Oak Avenue project moved to In Progress', time: '2 hours ago', icon: Building2, color: 'blue' },
-    { type: 'message', message: 'New message from Johnson Family', time: '4 hours ago', icon: MessageSquare, color: 'green' },
-    { type: 'document', message: 'Survey report uploaded for Maple Close', time: '6 hours ago', icon: FileText, color: 'orange' },
-    { type: 'task', message: 'Site visit completed at High Street', time: '1 day ago', icon: CheckSquare, color: 'purple' },
-  ]
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Activity className="w-5 h-5" />
-          Recent Activity
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {activities.map((activity, index) => (
-          <div key={index} className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50">
-            <div className={cn("p-1.5 rounded-full text-white", `bg-${activity.color}-500`)}>
-              <activity.icon className="w-3 h-3" />
+      {/* Alert Bar for Critical Items */}
+      {overview && overview.alerts.criticalIssues > 0 && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+                <div>
+                  <p className="font-medium text-red-900">
+                    {overview.alerts.criticalIssues} critical item{overview.alerts.criticalIssues !== 1 ? 's' : ''} need attention
+                  </p>
+                  <p className="text-sm text-red-700">
+                    {overview.alerts.overdueInvoices} overdue invoices • {overview.alerts.upcomingDeadlines} upcoming deadlines
+                  </p>
+                </div>
+              </div>
+              <Button variant="destructive" size="sm" asChild>
+                <Link href="/alerts">
+                  View Details
+                  <ArrowUpRight className="w-4 h-4 ml-1" />
+                </Link>
+              </Button>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm">{activity.message}</p>
-              <p className="text-xs text-muted-foreground">{activity.time}</p>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
+          </CardContent>
+        </Card>
+      )}
 
-// Loading Skeletons
-function DashboardSkeleton() {
-  return (
-    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-      <div className="space-y-2">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-4 w-96" />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        {[1,2,3,4].map(i => (
-          <Skeleton key={i} className="h-32" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 space-y-6">
-          <Skeleton className="h-64" />
-          <Skeleton className="h-64" />
-        </div>
-        <div className="space-y-6">
-          <Skeleton className="h-48" />
-          <Skeleton className="h-48" />
-        </div>
-      </div>
-    </div>
-  )
-}
+      {/* Quick Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <QuickStatsCard
+          title="Total Projects"
+          value={overview?.projects.total || 0}
+          subtitle={`${overview?.projects.active || 0} active`}
+          icon={<Building2 className="w-6 h-6 text-blue-600" />}
+          color="text-blue-600"
+          href="/projects"
+        />
 
-function KPISkeleton() {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-      {[1,2,3,4].map(i => (
-        <Skeleton key={i} className="h-32" />
-      ))}
+        <QuickStatsCard
+          title="Budget Overview"
+          value={formatCurrency(overview?.finances.totalBudget || 0)}
+          subtitle={`${overview?.finances.utilizationRate.toFixed(1) || 0}% utilized`}
+          icon={<PoundSterling className="w-6 h-6 text-green-600" />}
+          color="text-green-600"
+          href="/financials"
+        />
+
+        <QuickStatsCard
+          title="Pending Tasks"
+          value={overview?.tasks.pending || 0}
+          subtitle={`${overview?.tasks.overdue || 0} overdue`}
+          trend={overview?.tasks.overdue ? { direction: 'down', value: `${overview.tasks.overdue} overdue` } : undefined}
+          icon={<CheckSquare className="w-6 h-6 text-purple-600" />}
+          color="text-purple-600"
+          href="/tasks"
+        />
+
+        <QuickStatsCard
+          title="Messages"
+          value={overview?.communications.activeThreads || 0}
+          subtitle={`${overview?.communications.recentActivity || 0} recent`}
+          icon={<MessageSquare className="w-6 h-6 text-orange-600" />}
+          color="text-orange-600"
+          href="/messages"
+        />
+      </div>
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <ProjectStatusOverview projects={overview?.projects || { total: 0, active: 0, completed: 0, onHold: 0 }} />
+        <RecentActivityCard activities={recentActivity} />
+        <QuickActionsCard />
+      </div>
     </div>
   )
 }
