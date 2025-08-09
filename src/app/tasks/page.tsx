@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import { AddTaskModal } from '@/components/tasks/AddTaskModal'
+import { AddTaskModal } from '@/components/features/tasks/AddTaskModal'
 import {
   Table,
   TableHeader,

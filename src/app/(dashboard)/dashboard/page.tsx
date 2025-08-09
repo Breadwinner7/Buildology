@@ -2,191 +2,382 @@
 
 import { useState, useEffect } from 'react'
 import { useUser } from '@/hooks/useUser'
+import { supabase } from '@/lib/supabaseClient'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
   TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle2, 
   Building2, Users, Calendar, PoundSterling, MessageSquare,
   FileText, Camera, MapPin, Phone, Mail, Settings, Plus,
   Activity, Target, Zap, BarChart3, ArrowRight, RefreshCw,
   Bell, Star, Filter, Search, Download, Eye, HardHat,
-  Wrench, Home, AlertCircle, CheckSquare, UserCircle
+  Wrench, Home, AlertCircle, CheckSquare, UserCircle,
+  DollarSign, Percent, Calculator, TrendingDown as Warning
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { format } from 'date-fns'
+
+// Types for real data
+interface ProjectFinancial {
+  id: string
+  project_id: string
+  budget_total: number
+  budget_allocated: number
+  budget_spent: number
+  budget_remaining: number
+  currency: string
+  last_updated: string
+  projects: {
+    name: string
+    status: string
+    client_name?: string
+  }
+}
+
+interface DashboardMetrics {
+  totalProjects: number
+  activeProjects: number
+  totalBudget: number
+  totalSpent: number
+  totalRemaining: number
+  pendingTasks: number
+  overdueTasks: number
+  recentMessages: number
+  criticalIssues: number
+}
+
+interface KPIData {
+  label: string
+  value: string
+  change: string
+  trend: 'up' | 'down'
+  description: string
+  color: string
+}
+
+// Custom hooks for real data with better error handling
+function useFinancialData() {
+  const [financials, setFinancials] = useState<ProjectFinancial[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchFinancials() {
+      try {
+        setError(null)
+        
+        // First check if table exists and has data
+        const { data, error } = await supabase
+          .from('project_financials')
+          .select(`
+            id,
+            project_id,
+            budget_total,
+            budget_allocated,
+            budget_spent,
+            budget_remaining,
+            currency,
+            last_updated,
+            projects!inner (
+              name,
+              status,
+              client_name
+            )
+          `)
+          .order('last_updated', { ascending: false })
+          .limit(10)
+
+        if (error) {
+          console.error('Supabase error:', error)
+          
+          // If table doesn't exist, provide fallback
+          if (error.message?.includes('relation "project_financials" does not exist')) {
+            setError('Project financials table not found - using sample data')
+            setFinancials([])
+          } else {
+            setError(`Database error: ${error.message}`)
+          }
+        } else {
+          setFinancials(data || [])
+        }
+      } catch (err) {
+        console.error('Error fetching financial data:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch financial data')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchFinancials()
+  }, [])
+
+  return { financials, loading, error, refetch: () => setLoading(true) }
+}
+
+function useDashboardMetrics() {
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchMetrics() {
+      try {
+        setError(null)
+        
+        // Fetch basic project data (this table definitely exists)
+        const { data: projects, error: projectsError } = await supabase
+          .from('projects')
+          .select('id, status, created_at')
+
+        if (projectsError) {
+          throw new Error(`Projects error: ${projectsError.message}`)
+        }
+
+        // Fetch tasks data
+        const { data: tasks, error: tasksError } = await supabase
+          .from('tasks')
+          .select('id, status, due_date, created_at')
+
+        if (tasksError) {
+          console.warn('Tasks error:', tasksError.message)
+        }
+
+        // Fetch messages data
+        const { data: messages, error: messagesError } = await supabase
+          .from('messages')
+          .select('id, read_status, created_at')
+
+        if (messagesError) {
+          console.warn('Messages error:', messagesError.message)
+        }
+
+        // Try to fetch financial data for totals
+        const { data: financialData, error: financialError } = await supabase
+          .from('project_financials')
+          .select('budget_total, budget_spent, budget_remaining')
+
+        if (financialError) {
+          console.warn('Financial data not available:', financialError.message)
+        }
+
+        // Calculate metrics from available data
+        const totalProjects = projects?.length || 0
+        const activeProjects = projects?.filter(p => 
+          ['In Progress', 'Active', 'Works In Progress'].includes(p.status)
+        ).length || 0
+
+        const totalBudget = financialData?.reduce((sum, f) => sum + (f.budget_total || 0), 0) || 0
+        const totalSpent = financialData?.reduce((sum, f) => sum + (f.budget_spent || 0), 0) || 0
+        const totalRemaining = financialData?.reduce((sum, f) => sum + (f.budget_remaining || 0), 0) || 0
+
+        // Calculate task metrics
+        const now = new Date()
+        const overdueTasks = tasks?.filter(task => {
+          if (!task.due_date || task.status === 'completed') return false
+          return new Date(task.due_date) < now
+        }).length || 0
+
+        const pendingTasks = tasks?.filter(task => 
+          task.status !== 'completed' && task.status !== 'done'
+        ).length || 0
+
+        // Calculate message metrics
+        const recentMessages = messages?.filter(msg => {
+          const msgDate = new Date(msg.created_at)
+          const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+          return msgDate > dayAgo
+        }).length || 0
+
+        setMetrics({
+          totalProjects,
+          activeProjects,
+          totalBudget,
+          totalSpent,
+          totalRemaining,
+          pendingTasks,
+          overdueTasks,
+          recentMessages,
+          criticalIssues: overdueTasks // For now, overdue tasks are critical issues
+        })
+      } catch (error) {
+        console.error('Error fetching dashboard metrics:', error)
+        setError(error instanceof Error ? error.message : 'Failed to fetch metrics')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchMetrics()
+  }, [])
+
+  return { metrics, loading, error, refetch: () => setLoading(true) }
+}
 
 // Enhanced Dashboard Components
 export default function DashboardPage() {
   const { user } = useUser()
-  const [loading, setLoading] = useState(true)
+  const { financials, loading: financialsLoading, error: financialsError } = useFinancialData()
+  const { metrics, loading: metricsLoading, error: metricsError } = useDashboardMetrics()
   const [refreshing, setRefreshing] = useState(false)
-  const [dateRange, setDateRange] = useState('7d')
-
-  useEffect(() => {
-    // Simulate loading
-    setTimeout(() => setLoading(false), 1500)
-  }, [])
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    // Simulate refresh
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    setRefreshing(false)
+    // Simple refresh - reload the page
+    setTimeout(() => {
+      window.location.reload()
+    }, 1000)
   }
 
-  if (loading) {
+  if (metricsLoading || financialsLoading) {
     return <DashboardSkeleton />
   }
 
-return (
-  <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-      {/* Enhanced Header */}
-      <DashboardHeader user={user} onRefresh={handleRefresh} refreshing={refreshing} />
-
-      {/* KPI Overview */}
-      <EnhancedKPIGrid />
-
-      {/* Main Dashboard Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 min-h-0">
-        <div className="xl:col-span-2 space-y-6 flex flex-col">
-          <ProjectOverview />
-          <ProjectProgress />
-        </div>
-        <div className="space-y-6 flex flex-col">
-          <QuickActions />
-          <RecentActivity />
-          <UpcomingDeadlines />
-        </div>
-      </div>
-
-      {/* Secondary Grid – adjusted columns & height */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 min-h-0">
-        <div className="h-full flex flex-col"><EnhancedUnreadMessages /></div>
-        <div className="h-full flex flex-col"><RecentDocuments /></div>
-        <div className="h-full flex flex-col"><TeamPerformance /></div>
-        <div className="lg:col-span-2 xl:col-span-1 h-full flex flex-col"><RegionalOverview /></div>
-      </div>
-    </div>
-  </div>
-)
-
-}
-
-// Dashboard Header Component
-function DashboardHeader({ user, onRefresh, refreshing }: any) {
-  const currentTime = new Date().toLocaleString('en-GB', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  })
+  // Show errors but don't crash the page
+  const hasErrors = financialsError || metricsError
 
   return (
-    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">
-          Good {new Date().getHours() < 12 ? 'morning' : 'afternoon'}, {user?.name || 'there'}! 👋
-        </h1>
-        <p className="text-gray-600 mt-1">{currentTime}</p>
-      </div>
-      <div className="flex items-center gap-3">
-        <Button variant="outline" onClick={onRefresh} disabled={refreshing}>
-          <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
-          Refresh
-        </Button>
-        <Button>
-          <Plus className="w-4 h-4 mr-2" />
-          New Project
-        </Button>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
+        {/* Enhanced Header */}
+        <DashboardHeader user={user} onRefresh={handleRefresh} refreshing={refreshing} />
+
+        {/* Error Display */}
+        {hasErrors && (
+          <Card className="border-orange-200 bg-orange-50">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-2 text-orange-800">
+                <AlertTriangle className="w-5 h-5" />
+                <div>
+                  <p className="font-medium">Database Connection Issues</p>
+                  {financialsError && <p className="text-sm">{financialsError}</p>}
+                  {metricsError && <p className="text-sm">{metricsError}</p>}
+                  <p className="text-sm">Showing available data with sample metrics.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Real Financial KPIs */}
+        <RealFinancialKPIGrid metrics={metrics} hasErrors={hasErrors} />
+
+        {/* Financial Overview Cards */}
+        <FinancialOverviewCards financials={financials} />
+
+        {/* Main Dashboard Grid */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-2 space-y-6">
+            <RealProjectOverview />
+            <ProjectFinancialChart financials={financials} />
+          </div>
+          <div className="space-y-6">
+            <QuickActions />
+            <RecentActivity />
+            <FinancialAlerts financials={financials} />
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-// Enhanced KPI Grid
-function EnhancedKPIGrid() {
-  const kpis = [
-    { 
-      label: 'Total Projects', 
-      value: 24, 
-      change: +3, 
-      trend: 'up',
-      icon: Building2,
-      color: 'blue',
-      description: 'Active projects'
+// Real Financial KPI Grid with error handling
+function RealFinancialKPIGrid({ 
+  metrics, 
+  hasErrors 
+}: { 
+  metrics: DashboardMetrics | null
+  hasErrors: boolean 
+}) {
+  if (!metrics) return <KPISkeleton />
+
+  // Use sample data if we have errors
+  const kpis: KPIData[] = hasErrors ? [
+    {
+      label: "Total Projects",
+      value: "12",
+      change: "+2 this month",
+      trend: "up",
+      description: "Active projects in system",
+      color: "bg-blue-500"
     },
-    { 
-      label: 'In Progress', 
-      value: 12, 
-      change: +2, 
-      trend: 'up',
-      icon: Activity,
-      color: 'orange',
-      description: 'Currently active'
+    {
+      label: "Project Status",
+      value: "8",
+      change: "In progress",
+      trend: "up",
+      description: "Currently active",
+      color: "bg-green-500"
     },
-    { 
-      label: 'Completed', 
-      value: 8, 
-      change: +1, 
-      trend: 'up',
-      icon: CheckCircle2,
-      color: 'green',
-      description: 'This month'
+    {
+      label: "Pending Tasks",
+      value: "24",
+      change: "3 overdue",
+      trend: "down",
+      description: "Requiring attention",
+      color: "bg-orange-500"
     },
-    { 
-      label: 'On Hold', 
-      value: 4, 
-      change: -1, 
-      trend: 'down',
-      icon: AlertTriangle,
-      color: 'red',
-      description: 'Require attention'
+    {
+      label: "Team Messages",
+      value: "18",
+      change: "Today",
+      trend: "up",
+      description: "Recent activity",
+      color: "bg-purple-500"
+    }
+  ] : [
+    {
+      label: "Total Budget",
+      value: metrics.totalBudget > 0 ? `£${(metrics.totalBudget / 1000).toFixed(0)}k` : "£0",
+      change: "+5.2%",
+      trend: "up",
+      description: "Across all active projects",
+      color: "bg-blue-500"
     },
-    { 
-      label: 'Total Value', 
-      value: '£485k', 
-      change: '+12%', 
-      trend: 'up',
-      icon: PoundSterling,
-      color: 'emerald',
-      description: 'Portfolio value'
+    {
+      label: "Budget Spent",
+      value: metrics.totalSpent > 0 ? `£${(metrics.totalSpent / 1000).toFixed(0)}k` : "£0",
+      change: metrics.totalBudget > 0 ? `${((metrics.totalSpent / metrics.totalBudget) * 100).toFixed(1)}%` : "0%",
+      trend: metrics.totalSpent > metrics.totalBudget * 0.8 ? "down" : "up",
+      description: "Of total allocated budget",
+      color: "bg-orange-500"
     },
-    { 
-      label: 'This Month', 
-      value: '£125k', 
-      change: '+8%', 
-      trend: 'up',
-      icon: TrendingUp,
-      color: 'purple',
-      description: 'Revenue generated'
+    {
+      label: "Active Projects",
+      value: metrics.activeProjects.toString(),
+      change: `${metrics.totalProjects} total`,
+      trend: "up",
+      description: "Projects in progress",
+      color: "bg-green-500"
+    },
+    {
+      label: "Pending Tasks",
+      value: metrics.pendingTasks.toString(),
+      change: `${metrics.overdueTasks} overdue`,
+      trend: metrics.overdueTasks > 0 ? "down" : "up",
+      description: "Requiring attention",
+      color: metrics.overdueTasks > 0 ? "bg-red-500" : "bg-purple-500"
     }
   ]
 
-  const getColorClasses = (color: string) => {
-    const colors = {
-      blue: 'bg-blue-50 border-blue-200 text-blue-900',
-      orange: 'bg-orange-50 border-orange-200 text-orange-900',
-      green: 'bg-green-50 border-green-200 text-green-900',
-      red: 'bg-red-50 border-red-200 text-red-900',
-      emerald: 'bg-emerald-50 border-emerald-200 text-emerald-900',
-      purple: 'bg-purple-50 border-purple-200 text-purple-900'
-    }
-    return colors[color as keyof typeof colors]
-  }
-
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-      {kpis.map((kpi) => (
-        <Card key={kpi.label} className={cn("hover:shadow-md transition-all cursor-pointer border-2", getColorClasses(kpi.color))}>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+      {kpis.map((kpi, index) => (
+        <Card key={index} className="relative overflow-hidden border-0 shadow-lg bg-white/80 backdrop-blur-sm">
+          <div className={cn("absolute top-0 left-0 w-1 h-full", kpi.color)} />
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <kpi.icon className="w-6 h-6" />
-              <div className="flex items-center gap-1 text-xs">
+              <div className={cn("p-2 rounded-lg", kpi.color.replace('bg-', 'bg-').replace('-500', '-100'))}>
+                {index === 0 && <PoundSterling className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
+                {index === 1 && <Calculator className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
+                {index === 2 && <Building2 className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
+                {index === 3 && <CheckSquare className={cn("w-5 h-5", kpi.color.replace('bg-', 'text-'))} />}
+              </div>
+              <div className="flex items-center gap-1 text-sm">
                 {kpi.trend === 'up' ? (
                   <TrendingUp className="w-3 h-3 text-green-600" />
                 ) : (
@@ -209,23 +400,120 @@ function EnhancedKPIGrid() {
   )
 }
 
-// Project Overview with Charts
-function ProjectOverview() {
-  const projects = [
-    { name: "Residential Extension - Oak Avenue", status: "In Progress", completion: 75, client: "Johnson Family", value: "£45,000", region: "London", urgent: false },
-    { name: "Commercial Fit-out - High Street", status: "Planning", completion: 25, client: "Metro Retail Ltd", value: "£120,000", region: "Manchester", urgent: true },
-    { name: "Insurance Claim - Maple Close", status: "Survey", completion: 10, client: "Sarah Mitchell", value: "£32,000", region: "Birmingham", urgent: false },
-    { name: "New Build - Riverside", status: "In Progress", completion: 60, client: "Riverside Developments", value: "£280,000", region: "Leeds", urgent: false },
-  ]
+// Financial Overview Cards
+function FinancialOverviewCards({ financials }: { financials: ProjectFinancial[] }) {
+  const totalProjects = financials.length
+  const healthyProjects = financials.filter(f => f.budget_remaining > 0).length
+  const atRiskProjects = financials.filter(f => f.budget_remaining < 0).length
+  const avgBudgetUtilization = financials.length > 0 
+    ? financials.reduce((sum, f) => sum + ((f.budget_spent / f.budget_total) * 100), 0) / financials.length 
+    : 0
+
+  // Show cards even if no financial data
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <Card className="border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-50">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-green-800">Healthy Projects</p>
+              <p className="text-3xl font-bold text-green-900">{healthyProjects}</p>
+              <p className="text-xs text-green-600">Within budget</p>
+            </div>
+            <div className="p-3 bg-green-100 rounded-full">
+              <CheckCircle2 className="w-6 h-6 text-green-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-0 shadow-lg bg-gradient-to-br from-red-50 to-pink-50">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-red-800">At Risk Projects</p>
+              <p className="text-3xl font-bold text-red-900">{atRiskProjects}</p>
+              <p className="text-xs text-red-600">Over budget</p>
+            </div>
+            <div className="p-3 bg-red-100 rounded-full">
+              <AlertTriangle className="w-6 h-6 text-red-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-indigo-50">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-blue-800">Avg Budget Used</p>
+              <p className="text-3xl font-bold text-blue-900">{avgBudgetUtilization.toFixed(1)}%</p>
+              <p className="text-xs text-blue-600">Across all projects</p>
+            </div>
+            <div className="p-3 bg-blue-100 rounded-full">
+              <Percent className="w-6 h-6 text-blue-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// Real Project Overview (replacing mock data)
+function RealProjectOverview() {
+  const [projects, setProjects] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchProjects() {
+      try {
+        const { data, error } = await supabase
+          .from('projects')
+          .select(`
+            id,
+            name,
+            status,
+            client_name,
+            created_at,
+            target_completion
+          `)
+          .order('created_at', { ascending: false })
+          .limit(6)
+
+        if (error) {
+          console.error('Error fetching projects:', error)
+        } else {
+          setProjects(data || [])
+        }
+      } catch (error) {
+        console.error('Project fetch error:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchProjects()
+  }, [])
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'In Progress': return 'bg-blue-100 text-blue-800 border-blue-200'
+      case 'In Progress': case 'Works In Progress': return 'bg-blue-100 text-blue-800 border-blue-200'
       case 'Planning': return 'bg-purple-100 text-purple-800 border-purple-200'
-      case 'Survey': return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'Complete': return 'bg-green-100 text-green-800 border-green-200'
+      case 'Survey': case 'Survey Booked': return 'bg-orange-100 text-orange-800 border-orange-200'
+      case 'Complete': case 'Closed': return 'bg-green-100 text-green-800 border-green-200'
       default: return 'bg-gray-100 text-gray-800 border-gray-200'
     }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <Skeleton className="h-48 w-full" />
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
@@ -235,100 +523,200 @@ function ProjectOverview() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Building2 className="w-5 h-5" />
-              Active Projects
+              Recent Projects
             </CardTitle>
-            <CardDescription>Current project portfolio overview</CardDescription>
+            <CardDescription>Latest project updates and status</CardDescription>
           </div>
-          <Link href="/projects">
-            <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/projects">
               View All
               <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {projects.map((project, idx) => (
-          <div key={idx} className="p-4 bg-white rounded-lg border border-gray-200 hover:shadow-md transition-shadow">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold text-sm">{project.name}</h3>
-                  {project.urgent && <Badge variant="destructive" className="text-xs">Urgent</Badge>}
-                </div>
-                <div className="flex items-center gap-4 text-xs text-gray-600">
-                  <div className="flex items-center gap-1">
-                    <UserCircle className="w-3 h-3" />
-                    {project.client}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <MapPin className="w-3 h-3" />
-                    {project.region}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <PoundSterling className="w-3 h-3" />
-                    {project.value}
-                  </div>
-                </div>
-              </div>
-              <Badge variant="outline" className={getStatusColor(project.status)}>
-                {project.status}
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span>Progress</span>
-                <span>{project.completion}%</span>
-              </div>
-              <Progress value={project.completion} className="h-2" />
-            </div>
+        {projects.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>No projects found</p>
           </div>
-        ))}
+        ) : (
+          projects.map((project) => (
+            <div key={project.id} className="p-4 rounded-lg border bg-white hover:shadow-md transition-shadow">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1 min-w-0">
+                  <Link href={`/projects/${project.id}`} className="hover:underline">
+                    <h4 className="font-medium text-sm truncate">{project.name}</h4>
+                  </Link>
+                  <p className="text-xs text-muted-foreground mt-1">{project.client_name || 'No client specified'}</p>
+                </div>
+                <Badge className={cn("text-xs border", getStatusColor(project.status))}>
+                  {project.status}
+                </Badge>
+              </div>
+              
+              <div className="text-xs text-muted-foreground">
+                Created: {format(new Date(project.created_at), 'dd/MM/yyyy')}
+                {project.target_completion && (
+                  <span className="ml-2">
+                    • Due: {format(new Date(project.target_completion), 'dd/MM/yyyy')}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </CardContent>
     </Card>
   )
 }
 
-// Project Progress Chart
-function ProjectProgress() {
+// Project Financial Chart Component
+function ProjectFinancialChart({ financials }: { financials: ProjectFinancial[] }) {
+  if (financials.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5" />
+            Financial Overview
+          </CardTitle>
+          <CardDescription>Budget vs spending across projects</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center py-8 text-muted-foreground">
+            <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>No financial data available</p>
+            <p className="text-xs">Financial tracking will appear here once data is added</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const chartData = financials.slice(0, 6).map(f => ({
+    name: f.projects?.name?.substring(0, 20) + '...' || 'Unknown Project',
+    budget: f.budget_total / 1000,
+    spent: f.budget_spent / 1000,
+    remaining: f.budget_remaining / 1000
+  }))
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <BarChart3 className="w-5 h-5" />
-          Project Progress Analytics
+          Financial Overview
         </CardTitle>
-        <CardDescription>Performance metrics and completion trends</CardDescription>
+        <CardDescription>Budget vs spending across projects</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-lg">
-              <h4 className="font-semibold text-blue-900">Average Completion Time</h4>
-              <p className="text-2xl font-bold text-blue-600">14 weeks</p>
-              <p className="text-xs text-blue-700">2 weeks faster than industry average</p>
-            </div>
-            <div className="p-4 bg-green-50 rounded-lg">
-              <h4 className="font-semibold text-green-900">On-Time Delivery</h4>
-              <p className="text-2xl font-bold text-green-600">92%</p>
-              <p className="text-xs text-green-700">Above target of 85%</p>
-            </div>
-          </div>
-          <div className="col-span-2">
-            <div className="h-32 bg-gray-50 rounded-lg flex items-center justify-center text-gray-500">
-              <div className="text-center">
-                <BarChart3 className="w-8 h-8 mx-auto mb-2" />
-                <p className="text-sm">Progress Chart Placeholder</p>
+        <div className="space-y-4">
+          {chartData.map((project, index) => (
+            <div key={index} className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="font-medium">{project.name}</span>
+                <span className="text-muted-foreground">£{project.budget.toFixed(0)}k budget</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3 relative overflow-hidden">
+                <div 
+                  className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min((project.spent / project.budget) * 100, 100)}%` }}
+                />
+                {project.spent > project.budget && (
+                  <div 
+                    className="bg-red-500 h-3 absolute top-0 rounded-full"
+                    style={{ 
+                      left: '100%',
+                      width: `${Math.min(((project.spent - project.budget) / project.budget) * 100, 50)}%`
+                    }}
+                  />
+                )}
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Spent: £{project.spent.toFixed(0)}k</span>
+                <span className={project.remaining < 0 ? 'text-red-600' : 'text-green-600'}>
+                  {project.remaining < 0 ? 'Over by ' : 'Remaining: '}£{Math.abs(project.remaining).toFixed(0)}k
+                </span>
               </div>
             </div>
-          </div>
+          ))}
         </div>
       </CardContent>
     </Card>
   )
 }
 
-// Quick Actions Panel
+// Financial Alerts Component
+function FinancialAlerts({ financials }: { financials: ProjectFinancial[] }) {
+  const alerts = financials.filter(f => f.budget_remaining < 0 || (f.budget_spent / f.budget_total) > 0.9)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-orange-500" />
+          Financial Alerts
+        </CardTitle>
+        <CardDescription>{alerts.length} projects need attention</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {alerts.length === 0 ? (
+          <div className="text-center text-muted-foreground py-4">
+            <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-green-500" />
+            <p className="text-sm">All projects within budget</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {alerts.slice(0, 5).map((alert) => (
+              <div key={alert.id} className="p-3 rounded-lg border-l-4 border-orange-500 bg-orange-50">
+                <h4 className="font-medium text-sm">{alert.projects?.name}</h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {alert.budget_remaining < 0 
+                    ? `Over budget by £${Math.abs(alert.budget_remaining).toLocaleString()}`
+                    : `${((alert.budget_spent / alert.budget_total) * 100).toFixed(1)}% budget used`
+                  }
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Enhanced Header Component
+function DashboardHeader({ user, onRefresh, refreshing }: any) {
+  return (
+    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div>
+        <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-900 to-blue-800 bg-clip-text text-transparent">
+          Welcome back, {user?.first_name || 'User'}
+        </h1>
+        <p className="text-muted-foreground mt-2">
+          Here's your Buildology platform overview for {format(new Date(), 'EEEE, MMMM do')}
+        </p>
+      </div>
+      
+      <div className="flex items-center gap-3">
+        <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+          <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </Button>
+        <Button size="sm" asChild>
+          <Link href="/projects/new">
+            <Plus className="w-4 h-4 mr-2" />
+            New Project
+          </Link>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// Quick Actions (keeping from original)
 function QuickActions() {
   const actions = [
     { label: 'New Project', icon: Plus, color: 'blue', href: '/projects/new' },
@@ -359,7 +747,7 @@ function QuickActions() {
   )
 }
 
-// Recent Activity Feed
+// Recent Activity (keeping from original but could be enhanced)
 function RecentActivity() {
   const activities = [
     { type: 'project', message: 'Oak Avenue project moved to In Progress', time: '2 hours ago', icon: Building2, color: 'blue' },
@@ -377,24 +765,14 @@ function RecentActivity() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {activities.map((activity, idx) => (
-          <div key={idx} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
-            <div className={cn("p-2 rounded-full", 
-              activity.color === 'blue' && 'bg-blue-100',
-              activity.color === 'green' && 'bg-green-100',
-              activity.color === 'orange' && 'bg-orange-100',
-              activity.color === 'purple' && 'bg-purple-100'
-            )}>
-              <activity.icon className={cn("w-4 h-4",
-                activity.color === 'blue' && 'text-blue-600',
-                activity.color === 'green' && 'text-green-600',
-                activity.color === 'orange' && 'text-orange-600',
-                activity.color === 'purple' && 'text-purple-600'
-              )} />
+        {activities.map((activity, index) => (
+          <div key={index} className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50">
+            <div className={cn("p-1.5 rounded-full text-white", `bg-${activity.color}-500`)}>
+              <activity.icon className="w-3 h-3" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p className="text-sm">{activity.message}</p>
-              <p className="text-xs text-gray-500">{activity.time}</p>
+              <p className="text-xs text-muted-foreground">{activity.time}</p>
             </div>
           </div>
         ))}
@@ -403,252 +781,39 @@ function RecentActivity() {
   )
 }
 
-// Upcoming Deadlines
-function UpcomingDeadlines() {
-  const deadlines = [
-    { task: 'Survey return - Flat 12', due: 'Today', urgent: true, project: 'Insurance Claim' },
-    { task: 'Building control inspection', due: 'Tomorrow', urgent: false, project: 'Oak Avenue' },
-    { task: 'Client presentation', due: 'Friday', urgent: false, project: 'High Street' },
-    { task: 'Final account submission', due: 'Next week', urgent: false, project: 'Riverside' },
-  ]
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Clock className="w-5 h-5" />
-          Upcoming Deadlines
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {deadlines.map((deadline, idx) => (
-          <div key={idx} className={cn("p-3 rounded-lg border-l-4", deadline.urgent ? 'border-red-400 bg-red-50' : 'border-blue-400 bg-blue-50')}>
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="font-medium text-sm">{deadline.task}</p>
-                <p className="text-xs text-gray-600">{deadline.project}</p>
-              </div>
-              <Badge variant={deadline.urgent ? 'destructive' : 'secondary'} className="text-xs">
-                {deadline.due}
-              </Badge>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-// Enhanced Unread Messages
-function EnhancedUnreadMessages() {
-  const messages = [
-    { thread: "Kitchen Ceiling Issue", sender: "John Doe", lastMessage: "Uploaded site photos for review", time: "1h ago", unreadCount: 2, priority: "high" },
-    { thread: "Quote Approval", sender: "Sarah Client", lastMessage: "Can we reduce the tile costs?", time: "3h ago", unreadCount: 1, priority: "normal" },
-    { thread: "Access Arrangements", sender: "Tom Site Lead", lastMessage: "No access available on Friday", time: "Yesterday", unreadCount: 3, priority: "urgent" },
-  ]
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return 'bg-red-100 border-red-400'
-      case 'high': return 'bg-orange-100 border-orange-400'
-      default: return 'bg-blue-100 border-blue-400'
-    }
-  }
-
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5" />
-            Messages
-          </CardTitle>
-          <Badge variant="outline" className="text-xs">{messages.length} unread</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={cn("p-3 rounded-lg border-l-4 hover:shadow-md transition-shadow cursor-pointer", getPriorityColor(msg.priority))}>
-            <div className="flex justify-between items-center mb-1">
-              <h4 className="font-medium text-sm truncate">{msg.thread}</h4>
-              <span className="text-xs text-gray-500">{msg.time}</span>
-            </div>
-            <p className="text-xs text-gray-600 truncate mb-2">
-              <span className="font-medium">{msg.sender}</span>: {msg.lastMessage}
-            </p>
-            <Badge className="text-xs bg-blue-500 hover:bg-blue-600">{msg.unreadCount} unread</Badge>
-          </div>
-        ))}
-        <div className="pt-2">
-          <Link href="/messages" className="text-sm text-blue-600 hover:underline flex items-center">
-            View all messages <ArrowRight className="w-3 h-3 ml-1" />
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Recent Documents with previews
-function RecentDocuments() {
-  const documents = [
-    { name: "ScopeOfWorks.pdf", uploader: "Sarah Client", uploadedAt: "2h ago", type: "PDF", size: "2.4 MB", project: "Oak Avenue" },
-    { name: "Kitchen_Tiles_Quote.jpg", uploader: "John Contractor", uploadedAt: "4h ago", type: "Image", size: "1.2 MB", project: "High Street" },
-    { name: "Survey_Report.docx", uploader: "Michael Surveyor", uploadedAt: "Yesterday", type: "Document", size: "856 KB", project: "Maple Close" },
-  ]
-
-  const getFileIcon = (type: string) => {
-    switch (type) {
-      case 'PDF': return <FileText className="w-4 h-4 text-red-500" />
-      case 'Image': return <Camera className="w-4 h-4 text-green-500" />
-      case 'Document': return <FileText className="w-4 h-4 text-blue-500" />
-      default: return <FileText className="w-4 h-4 text-gray-500" />
-    }
-  }
-
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="w-5 h-5" />
-            Recent Documents
-          </CardTitle>
-          <Badge variant="outline" className="text-xs">{documents.length} uploaded</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {documents.map((doc, idx) => (
-          <div key={idx} className="p-3 bg-white rounded-lg border border-gray-200 hover:shadow-md transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3">
-              {getFileIcon(doc.type)}
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm truncate">{doc.name}</p>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span>{doc.project}</span>
-                  <span>•</span>
-                  <span>{doc.size}</span>
-                  <span>•</span>
-                  <span>{doc.uploadedAt}</span>
-                </div>
-              </div>
-              <Button variant="ghost" size="sm">
-                <Eye className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-        ))}
-        <div className="pt-2">
-          <Link href="/documents" className="text-sm text-blue-600 hover:underline flex items-center">
-            View all documents <ArrowRight className="w-3 h-3 ml-1" />
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Team Performance
-function TeamPerformance() {
-  const teamMembers = [
-    { name: "Sarah Johnson", role: "Project Manager", activeProjects: 4, completionRate: 95, avatar: "SJ" },
-    { name: "Mike Chen", role: "Surveyor", activeProjects: 6, completionRate: 88, avatar: "MC" },
-    { name: "Emma Wilson", role: "Site Supervisor", activeProjects: 3, completionRate: 92, avatar: "EW" },
-  ]
-
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Users className="w-5 h-5" />
-          Team Performance
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {teamMembers.map((member, idx) => (
-          <div key={idx} className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-              <span className="text-blue-600 font-semibold text-sm">{member.avatar}</span>
-            </div>
-            <div className="flex-1">
-              <p className="font-medium text-sm">{member.name}</p>
-              <p className="text-xs text-gray-500">{member.role}</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs">{member.activeProjects} projects</span>
-                <span className="text-xs">•</span>
-                <span className="text-xs">{member.completionRate}% completion</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-// Regional Overview
-function RegionalOverview() {
-  const regions = [
-    { name: "London", projects: 8, value: "£180k", growth: "+12%" },
-    { name: "Manchester", projects: 6, value: "£145k", growth: "+8%" },
-    { name: "Birmingham", projects: 4, value: "£95k", growth: "+15%" },
-    { name: "Leeds", projects: 6, value: "£165k", growth: "+5%" },
-  ]
-
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPin className="w-5 h-5" />
-          Regional Overview
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {regions.map((region, idx) => (
-          <div key={idx} className="p-3 bg-gray-50 rounded-lg">
-            <div className="flex justify-between items-center">
-              <h4 className="font-medium text-sm">{region.name}</h4>
-              <span className="text-xs text-green-600 font-medium">{region.growth}</span>
-            </div>
-            <div className="flex justify-between items-center mt-1 text-xs text-gray-600">
-              <span>{region.projects} projects</span>
-              <span>{region.value} value</span>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-// Loading Skeleton
+// Loading Skeletons
 function DashboardSkeleton() {
   return (
     <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-      <div className="flex justify-between items-center">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-48" />
-        </div>
-        <Skeleton className="h-10 w-32" />
+      <div className="space-y-2">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-4 w-96" />
       </div>
-      
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-        {[...Array(6)].map((_, i) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {[1,2,3,4].map(i => (
           <Skeleton key={i} className="h-32" />
         ))}
       </div>
-      
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-6">
-          <Skeleton className="h-96" />
+          <Skeleton className="h-64" />
           <Skeleton className="h-64" />
         </div>
         <div className="space-y-6">
           <Skeleton className="h-48" />
-          <Skeleton className="h-64" />
+          <Skeleton className="h-48" />
         </div>
       </div>
+    </div>
+  )
+}
+
+function KPISkeleton() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+      {[1,2,3,4].map(i => (
+        <Skeleton key={i} className="h-32" />
+      ))}
     </div>
   )
 }

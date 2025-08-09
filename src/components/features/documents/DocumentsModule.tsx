@@ -128,6 +128,7 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       return
     }
     
+    
     try {
       // Check authentication
       const { data: { user }, error: userError } = await supabase.auth.getUser()
@@ -145,14 +146,20 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       
       // Try with join first
       console.log('🔍 Attempting query with user_profiles join...')
-      const { data, error } = await supabase
-        .from('documents')
-        .select(`
-          *,
-          uploaded_by:user_profiles(email, full_name)
-        `)
-        .eq('project_id', projectId)
-        .order('uploaded_at', { ascending: false })
+const { data, error } = await supabase
+  .from('documents')
+  .select(`
+    *,
+    user_profiles:documents_user_id_fkey (
+      id,
+      email,
+      first_name,
+      surname,
+      preferred_name
+    )
+  `)
+  .eq('project_id', projectId)
+  .order('uploaded_at', { ascending: false });
 
       console.log('📄 Query result:', { 
         dataCount: data?.length, 

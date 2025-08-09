@@ -5,10 +5,10 @@ import { useProject } from '@/hooks/useProject'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ProjectProgressTracker } from '@/components/projects/ProjectProgressTracker'
-import { HoldStatusBanner } from '@/components/projects/HoldStatusBanner'
-import { ProjectOverviewPanel } from '@/components/projects/ProjectOverviewPanel'
-import { ProjectDetailsCard } from '@/components/projects/ProjectDetailsCard'
+import { ProjectProgressTracker } from '@/components/features/projects/ProjectProgressTracker'
+import { HoldStatusBanner } from '@/components/features/projects/HoldStatusBanner'
+import { ProjectOverviewPanel } from '@/components/features/projects/ProjectOverviewPanel'
+import { ProjectDetailsCard } from '@/components/features/projects/ProjectDetailsCard'
 import DocumentsModule from '@/components/features/documents/DocumentsModule' // Add this import
 import { 
   Calendar, MapPin, PoundSterling, Clock, User, 

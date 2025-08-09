@@ -10,9 +10,28 @@ export function useUser() {
   useEffect(() => {
     const fetchUser = async () => {
       const {
-        data: { user },
+        data: { user: authUser },
+        error: authError,
       } = await supabase.auth.getUser()
-      setUser(user)
+
+      if (!authUser || authError) {
+        setUser(null)
+        setLoading(false)
+        return
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .single()
+
+      if (profile && !profileError) {
+        setUser({ ...authUser, ...profile })
+      } else {
+        setUser(authUser) // fallback to basic user
+      }
+
       setLoading(false)
     }
 
@@ -21,11 +40,12 @@ export function useUser() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+      const newUser = session?.user ?? null
+      setUser(newUser)
     })
 
     return () => subscription.unsubscribe()
   }, [])
 
-  return { user, loading }
+  return { user, loading }
 }
