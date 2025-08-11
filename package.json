@@ -3,11 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
+    "dev": "next dev --turbopack --port 3000",
+    "dev:fast": "next dev --turbopack --port 3000 --experimental-https",
+    "build": "next build --experimental-build-mode=compile",
+    "build:turbo": "next build --turbopack",
+    "build:analyze": "ANALYZE=true next build",
     "start": "next start",
-    "lint": "next lint",
-    "lint:fix": "next lint --fix"
+    "lint": "next lint --max-warnings 0",
+    "lint:fix": "next lint --fix --max-warnings 0",
+    "type-check": "tsc --noEmit --skipLibCheck",
+    "type-check:fast": "tsc --noEmit --skipLibCheck --incremental",
+    "test": "echo \"Tests not configured yet\" && exit 0"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
@@ -34,13 +40,15 @@
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.51.0",
     "@tanstack/react-query": "^5.84.2",
+    "@tanstack/react-query-devtools": "^5.84.2",
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "isomorphic-dompurify": "^2.26.0",
     "lucide-react": "^0.525.0",
-    "next": "15.4.2",
+    "next": "^15.4.6",
     "next-themes": "^0.4.6",
     "react": "19.1.0",
     "react-day-picker": "^9.8.0",
@@ -53,6 +61,8 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@next/bundle-analyzer": "^15.4.6",
+    "@svgr/webpack": "^8.1.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -61,6 +71,7 @@
     "eslint-config-next": "15.4.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "webpack-bundle-analyzer": "^4.10.2"
   }
 }

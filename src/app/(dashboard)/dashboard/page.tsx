@@ -1,609 +1,434 @@
 'use client'
 
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useCallback, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import { useDashboardData } from '@/hooks/useDashboardData'
+import { useUser } from '@/hooks/useUser'
+import { usePerformance, useDeepMemo } from '@/lib/performance'
+import { withErrorBoundary } from '@/components/ui/error-boundary'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import { Separator } from '@/components/ui/separator'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { StatsCard, FeatureCard, ProjectCard, MetricCard } from '@/components/ui/enhanced-card'
+import { InsuranceAnalytics } from '@/components/charts/InsuranceAnalytics'
+import { LoadingState, LoadingSpinner } from '@/components/ui/loading'
 import { 
+  Building2, 
+  ClipboardList, 
   PoundSterling, 
-  TrendingUp, 
-  TrendingDown, 
-  Building2,
-  Calculator,
-  CheckSquare,
-  Clock,
-  RefreshCw,
-  AlertTriangle,
-  FileText,
   MessageSquare,
+  Shield,
   Calendar,
   Users,
-  ArrowUpRight,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  FileText,
   Plus,
-  Activity,
+  RefreshCw,
+  Eye,
+  ArrowRight,
+  Bell,
   Target,
-  BarChart3
+  Activity,
+  Zap,
+  MapPin,
+  User,
+  Flag
 } from 'lucide-react'
-import { supabase } from '@/lib/supabaseClient'
+import { format, formatDistanceToNow, isToday, isTomorrow } from 'date-fns'
 import { cn } from '@/lib/utils'
-import Link from 'next/link'
-
-// Types
-interface DashboardOverview {
-  projects: {
-    total: number
-    active: number
-    completed: number
-    onHold: number
-  }
-  finances: {
-    totalBudget: number
-    totalSpent: number
-    utilizationRate: number
-    averageProjectValue: number
-  }
-  tasks: {
-    total: number
-    pending: number
-    overdue: number
-    completedThisWeek: number
-  }
-  communications: {
-    unreadMessages: number
-    activeThreads: number
-    recentActivity: number
-  }
-  alerts: {
-    overdueInvoices: number
-    pendingQuotes: number
-    criticalIssues: number
-    upcomingDeadlines: number
-  }
-}
-
-interface RecentActivity {
-  id: string
-  type: 'project' | 'task' | 'message' | 'financial'
-  title: string
-  description: string
-  timestamp: string
-  status?: string
-  priority?: 'low' | 'normal' | 'high' | 'critical'
-}
-
-// API Functions
-const fetchDashboardOverview = async (): Promise<DashboardOverview> => {
-  try {
-    // Fetch all projects with their status
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('id, status, created_at')
-
-    // Fetch financial summaries
-    const { data: financials } = await supabase
-      .from('project_financials')
-      .select('budget_total, budget_spent')
-
-    // Fetch tasks
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('id, status, due_date, created_at')
-
-    // Fetch messages/threads
-    const { data: messages } = await supabase
-      .from('messages')
-      .select('id, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50)
-
-    const { data: threads } = await supabase
-      .from('threads')
-      .select('id')
-
-    // Fetch invoices for alerts
-    const { data: invoices } = await supabase
-      .from('invoices')
-      .select('id, status, due_date')
-
-    // Fetch quotes for alerts
-    const { data: quotes } = await supabase
-      .from('quotes')
-      .select('id, status')
-
-    // Calculate project metrics
-    const totalProjects = projects?.length || 0
-    const activeProjects = projects?.filter(p => 
-      ['works_in_progress', 'survey_booked', 'planning', 'awaiting_agreement'].includes(p.status)
-    ).length || 0
-    const completedProjects = projects?.filter(p => p.status === 'closed').length || 0
-    const onHoldProjects = projects?.filter(p => p.status === 'on_hold').length || 0
-
-    // Calculate financial metrics
-    const totalBudget = financials?.reduce((sum, f) => sum + (f.budget_total || 0), 0) || 0
-    const totalSpent = financials?.reduce((sum, f) => sum + (f.budget_spent || 0), 0) || 0
-    const utilizationRate = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0
-    const averageProjectValue = financials?.length ? totalBudget / financials.length : 0
-
-    // Calculate task metrics
-    const totalTasks = tasks?.length || 0
-    const pendingTasks = tasks?.filter(t => t.status !== 'done').length || 0
-    const overdueTasks = tasks?.filter(t => 
-      t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
-    ).length || 0
-    const completedThisWeek = tasks?.filter(t => 
-      t.status === 'done' && 
-      new Date(t.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-    ).length || 0
-
-    // Calculate communication metrics
-    const unreadMessages = 0 // TODO: implement when read status is available
-    const activeThreads = threads?.length || 0
-    const recentActivity = messages?.filter(m => 
-      new Date(m.created_at) > new Date(Date.now() - 24 * 60 * 60 * 1000)
-    ).length || 0
-
-    // Calculate alerts
-    const overdueInvoices = invoices?.filter(i => 
-      i.status === 'overdue' || (i.status === 'sent' && new Date(i.due_date) < new Date())
-    ).length || 0
-    const pendingQuotes = quotes?.filter(q => q.status === 'submitted').length || 0
-    const criticalIssues = overdueTasks + overdueInvoices
-    const upcomingDeadlines = tasks?.filter(t => {
-      if (!t.due_date || t.status === 'done') return false
-      const dueDate = new Date(t.due_date)
-      const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
-      return dueDate <= threeDaysFromNow && dueDate > new Date()
-    }).length || 0
-
-    return {
-      projects: {
-        total: totalProjects,
-        active: activeProjects,
-        completed: completedProjects,
-        onHold: onHoldProjects
-      },
-      finances: {
-        totalBudget,
-        totalSpent,
-        utilizationRate,
-        averageProjectValue
-      },
-      tasks: {
-        total: totalTasks,
-        pending: pendingTasks,
-        overdue: overdueTasks,
-        completedThisWeek
-      },
-      communications: {
-        unreadMessages,
-        activeThreads,
-        recentActivity
-      },
-      alerts: {
-        overdueInvoices,
-        pendingQuotes,
-        criticalIssues,
-        upcomingDeadlines
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching dashboard overview:', error)
-    // Return empty state on error
-    return {
-      projects: { total: 0, active: 0, completed: 0, onHold: 0 },
-      finances: { totalBudget: 0, totalSpent: 0, utilizationRate: 0, averageProjectValue: 0 },
-      tasks: { total: 0, pending: 0, overdue: 0, completedThisWeek: 0 },
-      communications: { unreadMessages: 0, activeThreads: 0, recentActivity: 0 },
-      alerts: { overdueInvoices: 0, pendingQuotes: 0, criticalIssues: 0, upcomingDeadlines: 0 }
-    }
-  }
-}
-
-const fetchRecentActivity = async (): Promise<RecentActivity[]> => {
-  try {
-    // This would typically combine multiple tables, for now just return recent projects
-    const { data: recentProjects } = await supabase
-      .from('projects')
-      .select('id, name, status, created_at, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(5)
-
-    return recentProjects?.map(project => ({
-      id: project.id,
-      type: 'project' as const,
-      title: project.name,
-      description: `Status: ${project.status}`,
-      timestamp: project.updated_at || project.created_at,
-      status: project.status
-    })) || []
-  } catch (error) {
-    console.error('Error fetching recent activity:', error)
-    return []
-  }
-}
 
 // Utility functions
 const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount)
+}
+
+const formatCompactCurrency = (amount: number) => {
   if (amount >= 1000000) {
     return `£${(amount / 1000000).toFixed(1)}M`
   } else if (amount >= 1000) {
     return `£${(amount / 1000).toFixed(0)}k`
   }
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: 'GBP'
-  }).format(amount)
+  return formatCurrency(amount)
 }
 
 const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'works_in_progress':
-    case 'active':
-      return 'bg-green-100 text-green-800'
-    case 'planning':
-    case 'survey_booked':
-      return 'bg-blue-100 text-blue-800'
-    case 'on_hold':
-      return 'bg-yellow-100 text-yellow-800'
-    case 'closed':
-    case 'completed':
-      return 'bg-gray-100 text-gray-800'
-    default:
-      return 'bg-gray-100 text-gray-800'
+  const statusColors: Record<string, string> = {
+    'works_in_progress': 'bg-blue-500',
+    'works_complete': 'bg-green-500',
+    'closed': 'bg-green-500',
+    'on_hold': 'bg-yellow-500',
+    'planning': 'bg-purple-500',
+    'survey_booked': 'bg-orange-500',
+    'survey_complete': 'bg-orange-500',
+    'awaiting_agreement': 'bg-amber-500',
+    'scheduling_works': 'bg-cyan-500',
+    'snagging': 'bg-pink-500',
+    'final_accounts': 'bg-indigo-500'
+  }
+  return statusColors[status] || 'bg-gray-500'
+}
+
+const getPriorityColor = (priority: string) => {
+  switch (priority?.toLowerCase()) {
+    case 'urgent': return 'bg-red-500'
+    case 'high': return 'bg-orange-500'
+    case 'normal': return 'bg-blue-500'
+    case 'low': return 'bg-gray-500'
+    default: return 'bg-gray-500'
   }
 }
 
-// Quick Stats Card Component
-interface QuickStatsCardProps {
-  title: string
-  value: string | number
-  subtitle?: string
-  trend?: { direction: 'up' | 'down'; value: string }
-  icon: React.ReactNode
-  color: string
-  href?: string
+const formatProjectStatus = (status: string) => {
+  return status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Active'
 }
 
-const QuickStatsCard: React.FC<QuickStatsCardProps> = ({
-  title,
-  value,
-  subtitle,
-  trend,
-  icon,
-  color,
-  href
-}) => {
-  const CardComponent = href ? Link : 'div'
-  const cardProps = href ? { href } : {}
-
-  return (
-    <CardComponent {...cardProps} className={href ? "block" : ""}>
-      <Card className="hover:shadow-md transition-shadow cursor-pointer">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-muted-foreground">{title}</p>
-              <p className="text-2xl font-bold">{value}</p>
-              {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
-            </div>
-            <div className={cn("p-3 rounded-full", color.replace('text-', 'bg-').replace('-600', '-100'))}>
-              {icon}
-            </div>
-          </div>
-          {trend && (
-            <div className="flex items-center mt-4 text-sm">
-              {trend.direction === 'up' ? (
-                <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
-              ) : (
-                <TrendingDown className="w-4 h-4 text-red-600 mr-1" />
-              )}
-              <span className={trend.direction === 'up' ? 'text-green-600' : 'text-red-600'}>
-                {trend.value}
-              </span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </CardComponent>
-  )
-}
-
-// Project Status Overview Component
-const ProjectStatusOverview: React.FC<{ projects: DashboardOverview['projects'] }> = ({ projects }) => {
-  const total = projects.total
-  const activePercentage = total > 0 ? (projects.active / total) * 100 : 0
-  const completedPercentage = total > 0 ? (projects.completed / total) * 100 : 0
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Project Status Overview</CardTitle>
-        <CardDescription>{total} total projects</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="text-center space-y-2">
-            <p className="text-3xl font-bold text-green-600">{projects.active}</p>
-            <p className="text-sm text-muted-foreground">Active</p>
-          </div>
-          <div className="text-center space-y-2">
-            <p className="text-3xl font-bold text-blue-600">{projects.completed}</p>
-            <p className="text-sm text-muted-foreground">Completed</p>
-          </div>
+// Loading skeleton for dashboard
+const DashboardSkeleton = () => (
+  <div className="min-h-screen bg-mesh">
+    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
+      <div className="space-y-4 animate-fade-in">
+        <div className="skeleton h-8 w-64 rounded-xl" />
+        <div className="skeleton h-4 w-96 rounded-lg" />
+      </div>
+      <LoadingState type="stats" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <LoadingState type="table" />
         </div>
-
-        <div className="space-y-3">
-          <div className="flex justify-between text-sm">
-            <span>Active Projects</span>
-            <span>{activePercentage.toFixed(0)}%</span>
-          </div>
-          <Progress value={activePercentage} className="h-2" />
-          
-          <div className="flex justify-between text-sm">
-            <span>Completion Rate</span>
-            <span>{completedPercentage.toFixed(0)}%</span>
-          </div>
-          <Progress value={completedPercentage} className="h-2" />
-        </div>
-
-        {projects.onHold > 0 && (
-          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-yellow-600" />
-              <span className="text-sm font-medium text-yellow-800">
-                {projects.onHold} project{projects.onHold !== 1 ? 's' : ''} on hold
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <Button asChild size="sm" className="flex-1">
-            <Link href="/projects">
-              <Building2 className="w-4 h-4 mr-2" />
-              View All Projects
-            </Link>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Recent Activity Component
-const RecentActivityCard: React.FC<{ activities: RecentActivity[] }> = ({ activities }) => {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
         <div>
-          <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest updates across all projects</CardDescription>
+          <LoadingState type="card" count={1} />
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/activity">
-            <Activity className="w-4 h-4 mr-2" />
-            View All
-          </Link>
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {activities.length === 0 ? (
-          <div className="text-center py-6 text-muted-foreground">
-            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p>No recent activity</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {activities.map((activity) => (
-              <div key={activity.id} className="flex items-start gap-3 p-3 border rounded-lg">
-                <div className="p-1 bg-blue-100 rounded">
-                  {activity.type === 'project' && <Building2 className="w-3 h-3 text-blue-600" />}
-                  {activity.type === 'task' && <CheckSquare className="w-3 h-3 text-green-600" />}
-                  {activity.type === 'message' && <MessageSquare className="w-3 h-3 text-purple-600" />}
-                  {activity.type === 'financial' && <PoundSterling className="w-3 h-3 text-orange-600" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{activity.title}</p>
-                  <p className="text-xs text-muted-foreground">{activity.description}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {new Date(activity.timestamp).toLocaleDateString('en-GB')}
-                  </p>
-                </div>
-                {activity.status && (
-                  <Badge className={getStatusColor(activity.status)} variant="secondary">
-                    {activity.status}
-                  </Badge>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
+      </div>
+    </div>
+  </div>
+)
 
-// Quick Actions Component
-const QuickActionsCard: React.FC = () => {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Quick Actions</CardTitle>
-        <CardDescription>Common tasks and shortcuts</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Button asChild className="w-full justify-start">
-          <Link href="/projects?action=create">
-            <Plus className="w-4 h-4 mr-2" />
-            Create New Project
-          </Link>
-        </Button>
-        
-        <Button asChild variant="outline" className="w-full justify-start">
-          <Link href="/tasks">
-            <CheckSquare className="w-4 h-4 mr-2" />
-            View All Tasks
-          </Link>
-        </Button>
-        
-        <Button asChild variant="outline" className="w-full justify-start">
-          <Link href="/financials">
-            <PoundSterling className="w-4 h-4 mr-2" />
-            Financial Overview
-          </Link>
-        </Button>
-        
-        <Button asChild variant="outline" className="w-full justify-start">
-          <Link href="/messages">
-            <MessageSquare className="w-4 h-4 mr-2" />
-            View Messages
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Main Dashboard Component
-export default function OverviewDashboard() {
+function ComprehensiveDashboard() {
+  // Performance monitoring
+  usePerformance('ComprehensiveDashboard')
+  const { user } = useUser()
+  const router = useRouter()
   const [refreshing, setRefreshing] = useState(false)
+  
+  const {
+    metrics,
+    recentProjects,
+    priorityTasks,
+    recentActivity,
+    complianceAlerts,
+    upcomingAppointments,
+    isLoading,
+    hasErrors,
+    refreshAll
+  } = useDashboardData()
 
-  // Data fetching
-  const { data: overview, isLoading: overviewLoading, refetch: refetchOverview } = useQuery({
-    queryKey: ['dashboard-overview'],
-    queryFn: fetchDashboardOverview,
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    refetchInterval: 5 * 60 * 1000 // Auto-refresh every 5 minutes
-  })
-
-  const { data: recentActivity = [], isLoading: activityLoading, refetch: refetchActivity } = useQuery({
-    queryKey: ['recent-activity'],
-    queryFn: fetchRecentActivity,
-    staleTime: 1 * 60 * 1000 // 1 minute
-  })
-
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      await Promise.all([refetchOverview(), refetchActivity()])
+      await refreshAll()
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [refreshAll])
 
-  const isLoading = overviewLoading || activityLoading
+  // Memoize computed values for performance
+  const welcomeMessage = useMemo(() => 
+    user?.role === 'policyholder' 
+      ? `Welcome back, ${user?.first_name || 'User'}`
+      : `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${user?.first_name || 'User'}`
+  , [user?.role, user?.first_name])
+
+  // Memoize dashboard metrics for performance
+  const memoizedMetrics = useDeepMemo(metrics, [metrics])
+  const memoizedRecentProjects = useDeepMemo(recentProjects, [recentProjects])
 
   if (isLoading) {
     return (
-      <div className="p-6 max-w-screen-2xl mx-auto">
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-32 bg-gray-200 rounded"></div>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="h-64 bg-gray-200 rounded"></div>
-            <div className="h-64 bg-gray-200 rounded"></div>
-            <div className="h-64 bg-gray-200 rounded"></div>
-          </div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+        <div className="max-w-screen-2xl mx-auto">
+          <DashboardSkeleton />
         </div>
       </div>
     )
   }
 
+  // Remove duplicate welcomeMessage (already memoized above)
+
   return (
-    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Overview of all your construction projects and activities
-          </p>
+    <div className="min-h-screen bg-mesh">
+      <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
+        {/* Header Section with Animated Welcome */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-slide-in">
+          <div className="space-y-2">
+            <h1 className="text-4xl font-bold tracking-tight text-gradient">
+              {welcomeMessage}
+            </h1>
+            <p className="text-muted-foreground text-lg text-balance">
+              {user?.role === 'policyholder' 
+                ? 'Track your claims and manage your property projects'
+                : 'Here\'s your comprehensive project overview and key metrics'
+              }
+            </p>
+            {user?.role && (
+              <Badge variant="outline" className="mt-2">
+                {user.role.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
+              </Badge>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
+              <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+            <Button onClick={() => router.push('/projects')}>
+              <Plus className="w-4 h-4 mr-2" />
+              New Project
+            </Button>
+          </div>
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={refreshing}>
-          <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </Button>
-      </div>
 
-      {/* Alert Bar for Critical Items */}
-      {overview && overview.alerts.criticalIssues > 0 && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-                <div>
-                  <p className="font-medium text-red-900">
-                    {overview.alerts.criticalIssues} critical item{overview.alerts.criticalIssues !== 1 ? 's' : ''} need attention
-                  </p>
-                  <p className="text-sm text-red-700">
-                    {overview.alerts.overdueInvoices} overdue invoices • {overview.alerts.upcomingDeadlines} upcoming deadlines
-                  </p>
+        {/* Error Alert */}
+        {hasErrors && (
+          <Alert className="border-amber-200 bg-amber-50">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Some dashboard data couldn't be loaded. The information below may be incomplete.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Enhanced KPI Grid with Beautiful Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <StatsCard
+            title="Active Projects"
+            value={memoizedMetrics?.activeProjects || 0}
+            description={`${memoizedMetrics?.totalProjects || 0} total projects`}
+            icon={<Building2 className="w-5 h-5" />}
+            gradient="blue"
+            onClick={() => router.push('/projects')}
+            className="animate-slide-in"
+            style={{ animationDelay: '0ms' }}
+          />
+
+          <StatsCard
+            title="Pending Tasks"
+            value={memoizedMetrics?.myPendingTasks || 0}
+            description={`${memoizedMetrics?.tasksThisWeek || 0} due this week`}
+            icon={<ClipboardList className="w-5 h-5" />}
+            gradient="green"
+            change={memoizedMetrics?.overdueTasks ? {
+              value: `${memoizedMetrics.overdueTasks} overdue`,
+              trend: 'down' as const,
+              label: 'Need attention'
+            } : undefined}
+            onClick={() => router.push('/tasks')}
+            className="animate-slide-in"
+            style={{ animationDelay: '100ms' }}
+          />
+
+          <StatsCard
+            title="Total Budget"
+            value={formatCompactCurrency(memoizedMetrics?.totalBudget || 0)}
+            description={`${formatCompactCurrency(memoizedMetrics?.budgetSpent || 0)} spent`}
+            icon={<PoundSterling className="w-5 h-5" />}
+            gradient="purple"
+            onClick={() => router.push('/financials')}
+            className="animate-slide-in"
+            style={{ animationDelay: '200ms' }}
+          />
+
+          <StatsCard
+            title="Messages"
+            value={memoizedMetrics?.unreadMessages || 0}
+            description={`${memoizedMetrics?.activeThreads || 0} active threads`}
+            icon={<MessageSquare className="w-5 h-5" />}
+            gradient="orange"
+            trend={memoizedMetrics?.unreadMessages && memoizedMetrics.unreadMessages > 0 ? 'up' : 'stable'}
+            onClick={() => router.push('/messages')}
+          />
+        </div>
+
+        {/* Secondary Metrics with Delayed Animation */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <MetricCard
+            title="Projects On Hold"
+            value={memoizedMetrics?.projectsOnHold || 0}
+            subValue="Require attention"
+            change={memoizedMetrics?.projectsOnHold && memoizedMetrics.projectsOnHold > 0 ? {
+              value: 'Action needed',
+              period: 'immediate',
+              trend: 'down' as const
+            } : undefined}
+            className="animate-slide-in"
+            style={{ animationDelay: '300ms' }}
+          />
+
+          <MetricCard
+            title="Today's Schedule"
+            value={memoizedMetrics?.todaysAppointments || 0}
+            subValue={`${memoizedMetrics?.upcomingAppointments || 0} upcoming`}
+            className="animate-slide-in"
+            style={{ animationDelay: '400ms' }}
+          />
+
+          <MetricCard
+            title="Compliance Status"
+            value={(memoizedMetrics?.complianceAlerts || 0) + (memoizedMetrics?.fcaReportingEvents || 0)}
+            subValue="Regulatory matters"
+            change={memoizedMetrics?.slaBreaches && memoizedMetrics.slaBreaches > 0 ? {
+              value: `${memoizedMetrics.slaBreaches} SLA breach${memoizedMetrics.slaBreaches > 1 ? 'es' : ''}`,
+              period: 'active',
+              trend: 'down' as const
+            } : undefined}
+            className="animate-slide-in"
+            style={{ animationDelay: '500ms' }}
+          />
+
+          <MetricCard
+            title="Overdue Items"
+            value={(memoizedMetrics?.overdueTasks || 0) + (memoizedMetrics?.overdueInvoices || 0)}
+            subValue="Tasks and invoices"
+            trend={((memoizedMetrics?.overdueTasks || 0) + (memoizedMetrics?.overdueInvoices || 0)) > 0 ? 'down' : 'stable'}
+          />
+        </div>
+
+        {/* Advanced Insurance Analytics Section */}
+        <div className="animate-slide-in" style={{ animationDelay: '600ms' }}>
+          <InsuranceAnalytics />
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Primary Content */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Beautiful Recent Projects */}
+            <Card className="card-elevated animate-slide-in" style={{ animationDelay: '800ms' }}>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg">
+                      <Building2 className="w-5 h-5 text-white" />
+                    </div>
+                    Recent Projects
+                  </CardTitle>
+                  <CardDescription className="text-balance">
+                    Latest project updates and status changes across your portfolio
+                  </CardDescription>
                 </div>
-              </div>
-              <Button variant="destructive" size="sm" asChild>
-                <Link href="/alerts">
-                  View Details
-                  <ArrowUpRight className="w-4 h-4 ml-1" />
-                </Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Quick Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <QuickStatsCard
-          title="Total Projects"
-          value={overview?.projects.total || 0}
-          subtitle={`${overview?.projects.active || 0} active`}
-          icon={<Building2 className="w-6 h-6 text-blue-600" />}
-          color="text-blue-600"
-          href="/projects"
-        />
-
-        <QuickStatsCard
-          title="Budget Overview"
-          value={formatCurrency(overview?.finances.totalBudget || 0)}
-          subtitle={`${overview?.finances.utilizationRate.toFixed(1) || 0}% utilized`}
-          icon={<PoundSterling className="w-6 h-6 text-green-600" />}
-          color="text-green-600"
-          href="/financials"
-        />
-
-        <QuickStatsCard
-          title="Pending Tasks"
-          value={overview?.tasks.pending || 0}
-          subtitle={`${overview?.tasks.overdue || 0} overdue`}
-          trend={overview?.tasks.overdue ? { direction: 'down', value: `${overview.tasks.overdue} overdue` } : undefined}
-          icon={<CheckSquare className="w-6 h-6 text-purple-600" />}
-          color="text-purple-600"
-          href="/tasks"
-        />
-
-        <QuickStatsCard
-          title="Messages"
-          value={overview?.communications.activeThreads || 0}
-          subtitle={`${overview?.communications.recentActivity || 0} recent`}
-          icon={<MessageSquare className="w-6 h-6 text-orange-600" />}
-          color="text-orange-600"
-          href="/messages"
-        />
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <ProjectStatusOverview projects={overview?.projects || { total: 0, active: 0, completed: 0, onHold: 0 }} />
-        <RecentActivityCard activities={recentActivity} />
-        <QuickActionsCard />
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => router.push('/projects')}
+                  className="rounded-xl hover:shadow-md transition-shadow"
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  View All
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {memoizedRecentProjects.length > 0 ? (
+                  <div className="container-grid">
+                    {memoizedRecentProjects.slice(0, 6).map((project, index) => (
+                      <div 
+                        key={project.id}
+                        className="animate-slide-in"
+                        style={{ animationDelay: `${900 + index * 100}ms` }}
+                      >
+                        <ProjectCard
+                          name={project.name}
+                          description={project.contact_name ? `Contact: ${project.contact_name}` : undefined}
+                          status={formatProjectStatus(project.status)}
+                          priority={project.priority as any || 'medium'}
+                          dueDate={project.target_completion_date ? format(new Date(project.target_completion_date), 'MMM dd, yyyy') : undefined}
+                          team={project.vulnerability_flags?.length > 0 ? [
+                            { name: 'Vulnerable Customer', initials: 'VC' }
+                          ] : []}
+                          onClick={() => router.push(`/projects/${project.id}`)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Building2 className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <h3 className="text-lg font-medium mb-2">No Recent Projects</h3>
+                    <p className="text-sm">Projects will appear here once you create them</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+          
+          {/* Right Column - Sidebar */}
+          <div className="space-y-6">
+            {/* Quick Actions */}
+            <Card className="card-elevated animate-slide-in" style={{ animationDelay: '1200ms' }}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <div className="p-2 rounded-xl bg-gradient-to-br from-green-500 to-green-600 shadow-lg">
+                    <Zap className="w-5 h-5 text-white" />
+                  </div>
+                  Quick Actions
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start rounded-xl hover:shadow-md transition-shadow"
+                  onClick={() => router.push('/projects?action=create')}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create New Project
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start rounded-xl hover:shadow-md transition-shadow"
+                  onClick={() => router.push('/tasks?action=create')}
+                >
+                  <ClipboardList className="w-4 h-4 mr-2" />
+                  Add New Task
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start rounded-xl hover:shadow-md transition-shadow"
+                  onClick={() => router.push('/messages?action=create')}
+                >
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Start Conversation
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+        
+        {/* Action Buttons */}
+        <div className="flex justify-center pt-8">
+          <Button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            size="lg"
+            className="rounded-2xl px-8 bg-gradient-to-r from-primary to-primary/80 hover:shadow-xl transition-all"
+          >
+            <RefreshCw className={cn("w-5 h-5 mr-2", refreshing && "animate-spin")} />
+            {refreshing ? 'Refreshing...' : 'Refresh Dashboard'}
+          </Button>
+        </div>
       </div>
     </div>
   )
 }
+
+// Export with error boundary wrapper for production-grade error handling
+export default withErrorBoundary(ComprehensiveDashboard)

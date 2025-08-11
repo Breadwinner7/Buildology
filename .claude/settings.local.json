@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx next lint:*)",
+      "Bash(curl:*)",
+      "Bash(find:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(rg:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(npm info:*)",
+      "Bash(npm update:*)",
+      "Bash(npm audit:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run type-check:*)",
+      "Bash(touch:*)",
+      "Bash(npx tsc:*)",
+      "Bash(psql:*)",
+      "Bash(npx supabase:*)",
+      "Bash(npm run lint:*)",
+      "Bash(pkill:*)",
+      "Bash(npx next dev:*)",
+      "Bash(git checkout:*)"
+    ],
+    "deny": []
+  }
+}

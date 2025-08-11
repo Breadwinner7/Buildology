@@ -60,7 +60,7 @@ export function AddTaskModal({ projectId, onTaskAdded, onTaskCreated, children }
   const [description, setDescription] = useState('')
   const [assignedTo, setAssignedTo] = useState<string | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectId || '')
-  const [priority, setPriority] = useState<'Low' | 'Normal' | 'High' | 'Urgent'>('Normal')
+  const [priority, setPriority] = useState<'low' | 'normal' | 'high' | 'urgent'>('normal')
   const [dueDate, setDueDate] = useState<Date | null>(null)
 
   useEffect(() => {
@@ -252,7 +252,7 @@ export function AddTaskModal({ projectId, onTaskAdded, onTaskCreated, children }
     setCustomTitle('')
     setDescription('')
     setAssignedTo(null)
-    setPriority('Normal')
+    setPriority('normal')
     setDueDate(null)
     setSelectedProjectId(projectId || '')
     setError(null)
@@ -299,7 +299,7 @@ export function AddTaskModal({ projectId, onTaskAdded, onTaskCreated, children }
                 <SelectValue placeholder="Select a predefined task (optional)" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">None - Custom Task Only</SelectItem>
+                <SelectItem value="all">None - Custom Task Only</SelectItem>
                 {PREDEFINED_TASKS.map(task => (
                   <SelectItem key={task} value={task}>{task}</SelectItem>
                 ))}
@@ -396,30 +396,30 @@ export function AddTaskModal({ projectId, onTaskAdded, onTaskCreated, children }
 
             <div className="space-y-2">
               <Label className="text-sm font-medium">Priority</Label>
-              <Select onValueChange={(val) => setPriority(val as 'Low' | 'Normal' | 'High' | 'Urgent')} value={priority}>
+              <Select onValueChange={(val) => setPriority(val as 'low' | 'normal' | 'high' | 'urgent')} value={priority}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select priority" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Low">
+                  <SelectItem value="low">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
                       Low
                     </div>
                   </SelectItem>
-                  <SelectItem value="Normal">
+                  <SelectItem value="normal">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
                       Normal
                     </div>
                   </SelectItem>
-                  <SelectItem value="High">
+                  <SelectItem value="high">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
                       High
                     </div>
                   </SelectItem>
-                  <SelectItem value="Urgent">
+                  <SelectItem value="urgent">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-red-400 rounded-full"></div>
                       Urgent

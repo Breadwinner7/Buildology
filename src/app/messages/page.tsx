@@ -1,182 +1,391 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabaseClient'
 import { useUser } from '@/hooks/useUser'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import {
+  useThreads,
+  useMessagingUsers,
+  useMessagingProjects,
+  useMessagingMutations,
+  getThreadPriorityColor,
+  getThreadPriorityLabel,
+  formatMessageTime,
+  type Thread,
+  type MessageFilters,
+  type CreateThreadData
+} from '@/hooks/useMessaging'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { 
-  MessageSquare, Search, Filter, Clock, AlertCircle, CheckCircle2,
-  User, Calendar, MapPin, Building2, Mail, Phone, Archive,
-  MoreVertical, Reply, Forward, Star, Trash2, Eye, Users,
-  AlertTriangle, ArrowRight, Paperclip, Send
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  MessageSquare,
+  Search,
+  Filter,
+  Plus,
+  Users,
+  Building2,
+  Flag,
+  Clock,
+  AlertTriangle,
+  CheckCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Mail,
+  MailOpen,
+  Archive,
+  Star,
+  Paperclip
 } from 'lucide-react'
+import { format as formatDate } from 'date-fns'
 import { cn } from '@/lib/utils'
 
-interface Message {
-  id: string
-  content: string
-  sender_id: string
-  sender_name: string
-  sender_email?: string
-  thread_id: string
-  thread_title: string
-  project_id: string
-  project_name: string
-  project_reference?: string
-  client_name?: string
-  created_at: string
-  read_status: boolean
-  priority: 'low' | 'normal' | 'high' | 'urgent'
-  message_type: 'internal' | 'client' | 'contractor' | 'system'
-  attachments_count?: number
-  region?: string
-}
+const THREAD_PRIORITIES = [
+  { value: 'low', label: 'Low Priority', color: 'bg-gray-500' },
+  { value: 'normal', label: 'Normal', color: 'bg-blue-500' },
+  { value: 'high', label: 'High Priority', color: 'bg-orange-500' },
+  { value: 'urgent', label: 'Urgent', color: 'bg-red-500' }
+] as const
 
-export default function MessagesPage() {
-  const router = useRouter()
-  const { user } = useUser()
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [activeTab, setActiveTab] = useState('unread')
-  const [filterPriority, setFilterPriority] = useState('all')
-  const [filterType, setFilterType] = useState('all')
-  const [selectedMessages, setSelectedMessages] = useState<string[]>([])
-
-  useEffect(() => {
-    fetchMessages()
-  }, [activeTab])
-
-  const fetchMessages = async () => {
-    setLoading(true)
-    
-    let query = supabase
-      .from('messages_with_context') // This would be a view joining messages with project/thread data
-      .select(`
-        id, content, sender_id, sender_name, sender_email,
-        thread_id, thread_title, project_id, project_name, 
-        project_reference, client_name, created_at, read_status,
-        priority, message_type, attachments_count, region
-      `)
-      .order('created_at', { ascending: false })
-      .limit(50)
-
-    if (activeTab === 'unread') {
-      query = query.eq('read_status', false)
-    } else if (activeTab === 'starred') {
-      query = query.eq('starred', true)
-    }
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Error fetching messages:', error)
-    } else {
-      setMessages(data || [])
-    }
-    setLoading(false)
-  }
-
-  const filteredMessages = messages.filter(message => {
-    const matchesSearch = 
-      message.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      message.project_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      message.sender_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      message.client_name?.toLowerCase().includes(searchTerm.toLowerCase())
-    
-    const matchesPriority = filterPriority === 'all' || message.priority === filterPriority
-    const matchesType = filterType === 'all' || message.message_type === filterType
-    
-    return matchesSearch && matchesPriority && matchesType
+// Create Thread Dialog
+function CreateThreadDialog({ 
+  open, 
+  onOpenChange 
+}: { 
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [formData, setFormData] = useState<CreateThreadData>({
+    title: '',
+    project_id: '',
+    priority: 'normal',
+    participant_ids: [],
+    initial_message: ''
   })
 
-  const handleMessageClick = (message: Message) => {
-    // Mark as read
-    markAsRead(message.id)
-    // Navigate to project message thread
-    router.push(`/projects/${message.project_id}?tab=communications&thread=${message.thread_id}`)
-  }
+  const { data: users = [] } = useMessagingUsers()
+  const { data: projects = [] } = useMessagingProjects()
+  const { createThread } = useMessagingMutations()
 
-  const markAsRead = async (messageId: string) => {
-    await supabase
-      .from('messages')
-      .update({ read_status: true })
-      .eq('id', messageId)
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     
-    setMessages(prev => prev.map(msg => 
-      msg.id === messageId ? { ...msg, read_status: true } : msg
-    ))
-  }
-
-  const markAllAsRead = async () => {
-    const unreadIds = filteredMessages.filter(m => !m.read_status).map(m => m.id)
-    
-    if (unreadIds.length > 0) {
-      await supabase
-        .from('messages')
-        .update({ read_status: true })
-        .in('id', unreadIds)
-      
-      setMessages(prev => prev.map(msg => 
-        unreadIds.includes(msg.id) ? { ...msg, read_status: true } : msg
-      ))
+    try {
+      await createThread.mutateAsync(formData)
+      onOpenChange(false)
+      setFormData({
+        title: '',
+        project_id: '',
+        priority: 'normal',
+        participant_ids: [],
+        initial_message: ''
+      })
+    } catch (error) {
+      console.error('Error creating thread:', error)
     }
   }
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return 'bg-red-100 text-red-800 border-red-200'
-      case 'high': return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'normal': return 'bg-blue-100 text-blue-800 border-blue-200'
-      case 'low': return 'bg-gray-100 text-gray-800 border-gray-200'
-      default: return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
+  const toggleParticipant = (userId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      participant_ids: prev.participant_ids.includes(userId)
+        ? prev.participant_ids.filter(id => id !== userId)
+        : [...prev.participant_ids, userId]
+    }))
   }
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'client': return <User className="w-4 h-4" />
-      case 'contractor': return <Building2 className="w-4 h-4" />
-      case 'internal': return <Users className="w-4 h-4" />
-      case 'system': return <AlertCircle className="w-4 h-4" />
-      default: return <MessageSquare className="w-4 h-4" />
-    }
-  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Start New Conversation</DialogTitle>
+          <DialogDescription>
+            Create a new thread and invite team members to collaborate
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="title">Thread Title*</Label>
+            <Input
+              id="title"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              placeholder="Enter conversation title"
+              required
+            />
+          </div>
 
-  const formatTimeAgo = (dateString: string) => {
-    const now = new Date()
-    const messageDate = new Date(dateString)
-    const diffInSeconds = Math.floor((now.getTime() - messageDate.getTime()) / 1000)
-    
-    if (diffInSeconds < 60) return 'Just now'
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
-    
-    return messageDate.toLocaleDateString('en-GB', { 
-      day: 'numeric', 
-      month: 'short',
-      year: messageDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="project">Project (Optional)</Label>
+              <Select
+                value={formData.project_id}
+                onValueChange={(value) => setFormData({ ...formData, project_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select project" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="no-project">No Project</SelectItem>
+                  {projects.map(project => (
+                    <SelectItem key={project.id} value={project.id}>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-3 h-3" />
+                        {project.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="priority">Priority</Label>
+              <Select
+                value={formData.priority}
+                onValueChange={(value) => setFormData({ ...formData, priority: value as any })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {THREAD_PRIORITIES.map(priority => (
+                    <SelectItem key={priority.value} value={priority.value}>
+                      <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", priority.color)} />
+                        {priority.label}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Participants</Label>
+            <div className="border rounded-md max-h-40 overflow-y-auto">
+              {users.map(user => (
+                <div
+                  key={user.id}
+                  className="flex items-center gap-3 p-2 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => toggleParticipant(user.id)}
+                >
+                  <Checkbox
+                    checked={formData.participant_ids.includes(user.id)}
+                    onChange={() => toggleParticipant(user.id)}
+                  />
+                  <Avatar className="w-6 h-6">
+                    <AvatarImage src={user.avatar_url || undefined} />
+                    <AvatarFallback className="text-xs">
+                      {user.first_name?.[0]}{user.surname?.[0]}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{user.first_name} {user.surname}</p>
+                    <p className="text-xs text-muted-foreground">{user.role}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {formData.participant_ids.length} participant{formData.participant_ids.length !== 1 ? 's' : ''} selected
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="initial_message">Initial Message (Optional)</Label>
+            <Textarea
+              id="initial_message"
+              value={formData.initial_message}
+              onChange={(e) => setFormData({ ...formData, initial_message: e.target.value })}
+              placeholder="Start the conversation..."
+              rows={3}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              disabled={createThread.isPending || !formData.title || formData.participant_ids.length === 0}
+            >
+              {createThread.isPending ? 'Creating...' : 'Start Conversation'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Thread List Item
+function ThreadListItem({ 
+  thread, 
+  onClick 
+}: { 
+  thread: Thread
+  onClick: () => void
+}) {
+  const isUnread = thread.unread_count > 0
+
+  return (
+    <Card 
+      className={cn(
+        "hover:shadow-md transition-all cursor-pointer",
+        isUnread && "border-blue-200 bg-blue-50/50"
+      )}
+      onClick={onClick}
+    >
+      <CardContent className="p-4">
+        <div className="space-y-3">
+          {/* Header */}
+          <div className="flex items-start justify-between">
+            <div className="flex-1 space-y-1">
+              <div className="flex items-center gap-2">
+                <h3 className={cn(
+                  "font-medium text-sm truncate",
+                  isUnread && "font-semibold"
+                )}>
+                  {thread.title}
+                </h3>
+                {isUnread && (
+                  <Badge variant="default" className="text-xs px-1.5 py-0.5">
+                    {thread.unread_count}
+                  </Badge>
+                )}
+              </div>
+              
+              {thread.last_message && (
+                <p className="text-xs text-muted-foreground line-clamp-2">
+                  <span className="font-medium">
+                    {thread.last_message.user?.first_name}:
+                  </span>{' '}
+                  {thread.last_message.content}
+                </p>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-2 ml-4">
+              <div className={cn("w-3 h-3 rounded-full", getThreadPriorityColor(thread.priority))} />
+              <Badge variant="outline" className="text-xs">
+                <Flag className="w-3 h-3 mr-1" />
+                {getThreadPriorityLabel(thread.priority)}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Project */}
+          {thread.project && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Building2 className="w-3 h-3" />
+              <span>{thread.project.name}</span>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Users className="w-3 h-3" />
+              <span>{thread.participants_count} participant{thread.participants_count !== 1 ? 's' : ''}</span>
+            </div>
+            
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="w-3 h-3" />
+              <span>{formatMessageTime(thread.updated_at)}</span>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Main Messages Page
+export default function MessagesPage() {
+  const { user } = useUser()
+  const router = useRouter()
+  
+  const [filters, setFilters] = useState<Partial<MessageFilters>>({
+    search: '',
+    project_id: '',
+    priority: [],
+    unread_only: false,
+    archived: false
+  })
+  const [showFilters, setShowFilters] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+
+  // Data fetching
+  const threadsQuery = useThreads(filters)
+  const { data: projects = [] } = useMessagingProjects()
+
+  const threads = threadsQuery.data || []
+  const isLoading = threadsQuery.isLoading
+  const error = threadsQuery.error
+
+  // Filter threads based on search
+  const filteredThreads = useMemo(() => {
+    return threads.filter(thread => {
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase()
+        const searchableText = [
+          thread.title,
+          thread.last_message?.content,
+          thread.project?.name,
+          thread.created_by_user?.first_name,
+          thread.created_by_user?.surname
+        ].filter(Boolean).join(' ').toLowerCase()
+        
+        if (!searchableText.includes(searchLower)) return false
+      }
+
+      if (filters.unread_only && thread.unread_count === 0) {
+        return false
+      }
+
+      return true
     })
-  }
+  }, [threads, filters])
 
-  const unreadCount = messages.filter(m => !m.read_status).length
+  // Message statistics
+  const messageStats = useMemo(() => {
+    const total = threads.length
+    const unread = threads.filter(t => t.unread_count > 0).length
+    const urgent = threads.filter(t => t.priority === 'urgent').length
+    const highPriority = threads.filter(t => t.priority === 'high').length
+    const archived = threads.filter(t => t.is_archived).length
 
-  if (loading) {
+    return { total, unread, urgent, highPriority, archived }
+  }, [threads])
+
+  if (isLoading) {
     return (
-      <div className="p-8 max-w-6xl mx-auto">
-        <div className="space-y-4">
-          <Skeleton className="h-8 w-64" />
-          <div className="space-y-3">
-            {[1,2,3,4,5].map(i => (
-              <Skeleton key={i} className="h-32 w-full" />
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+        <div className="max-w-screen-2xl mx-auto space-y-6">
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-64" />
+            <div className="flex gap-4">
+              {[...Array(4)].map((_, i) => (
+                <Skeleton key={i} className="h-20 w-48" />
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4">
+            {[...Array(8)].map((_, i) => (
+              <Skeleton key={i} className="h-32" />
             ))}
           </div>
         </div>
@@ -185,239 +394,241 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2 bg-blue-100 rounded-lg">
-            <MessageSquare className="w-6 h-6 text-blue-600" />
-          </div>
-          <h1 className="text-3xl font-bold">Messages</h1>
-          {unreadCount > 0 && (
-            <Badge variant="destructive" className="text-sm">
-              {unreadCount} unread
-            </Badge>
-          )}
-        </div>
-        <p className="text-muted-foreground">
-          Centralized view of all project communications and notifications
-        </p>
-      </div>
-
-      {/* Filters and Search */}
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <div className="flex flex-col lg:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-              <Input
-                placeholder="Search messages, projects, or contacts..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            
-            <Select value={filterPriority} onValueChange={setFilterPriority}>
-              <SelectTrigger className="w-full lg:w-48">
-                <AlertTriangle className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Priority" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Priorities</SelectItem>
-                <SelectItem value="urgent">Urgent</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="normal">Normal</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={filterType} onValueChange={setFilterType}>
-              <SelectTrigger className="w-full lg:w-48">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Message Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="client">Client Messages</SelectItem>
-                <SelectItem value="contractor">Contractor</SelectItem>
-                <SelectItem value="internal">Internal</SelectItem>
-                <SelectItem value="system">System</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Message Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="p-6 max-w-screen-2xl mx-auto space-y-6">
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <TabsList className="grid w-full sm:w-fit grid-cols-3">
-            <TabsTrigger value="unread" className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
-              Unread ({messages.filter(m => !m.read_status).length})
-            </TabsTrigger>
-            <TabsTrigger value="all" className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              All Messages
-            </TabsTrigger>
-            <TabsTrigger value="starred" className="flex items-center gap-2">
-              <Star className="w-4 h-4" />
-              Starred
-            </TabsTrigger>
-          </TabsList>
-
-          <div className="flex gap-2">
-            {activeTab === 'unread' && unreadCount > 0 && (
-              <Button variant="outline" onClick={markAllAsRead}>
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-                Mark All Read
-              </Button>
-            )}
-            <Button variant="outline">
-              <Archive className="w-4 h-4 mr-2" />
-              Archive
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Messages</h1>
+            <p className="text-muted-foreground">
+              Communicate and collaborate with your team
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={() => threadsQuery.refetch()}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+            <Button onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              New Conversation
             </Button>
           </div>
         </div>
 
-        <TabsContent value={activeTab} className="space-y-4">
-          {filteredMessages.length === 0 ? (
+        {/* Error Alert */}
+        {error && (
+          <Alert className="border-red-200 bg-red-50">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Failed to load messages. Please try refreshing the page.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Total Threads</p>
+                  <p className="text-2xl font-bold">{messageStats.total}</p>
+                </div>
+                <MessageSquare className="w-8 h-8 text-blue-600" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Unread</p>
+                  <p className="text-2xl font-bold text-blue-600">{messageStats.unread}</p>
+                </div>
+                <Mail className="w-8 h-8 text-blue-600" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Urgent</p>
+                  <p className="text-2xl font-bold text-red-600">{messageStats.urgent}</p>
+                </div>
+                <AlertTriangle className="w-8 h-8 text-red-600" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">High Priority</p>
+                  <p className="text-2xl font-bold text-orange-600">{messageStats.highPriority}</p>
+                </div>
+                <Flag className="w-8 h-8 text-orange-600" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Archived</p>
+                  <p className="text-2xl font-bold text-gray-600">{messageStats.archived}</p>
+                </div>
+                <Archive className="w-8 h-8 text-gray-600" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Search and Filters */}
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search conversations..."
+                value={filters.search || ''}
+                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                className="pl-10 max-w-md"
+              />
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant={filters.unread_only ? "default" : "outline"}
+                onClick={() => setFilters({ ...filters, unread_only: !filters.unread_only })}
+                size="sm"
+              >
+                <Mail className="w-4 h-4 mr-2" />
+                Unread Only
+              </Button>
+              
+              <Button
+                variant="outline"
+                onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-2"
+              >
+                <Filter className="w-4 h-4" />
+                Filters
+                {showFilters ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </Button>
+            </div>
+          </div>
+
+          {/* Expanded Filters */}
+          {showFilters && (
             <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <MessageSquare className="w-12 h-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No messages found</h3>
-                <p className="text-muted-foreground text-center">
-                  {activeTab === 'unread' 
-                    ? "You're all caught up! No unread messages."
-                    : "No messages match your current filters."
-                  }
-                </p>
+              <CardContent className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>Project</Label>
+                    <Select
+                      value={filters.project_id || ''}
+                      onValueChange={(value) => setFilters({ ...filters, project_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="All projects" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all-projects">All Projects</SelectItem>
+                        {projects.map(project => (
+                          <SelectItem key={project.id} value={project.id}>
+                            <div className="flex items-center gap-2">
+                              <Building2 className="w-3 h-3" />
+                              {project.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Priority</Label>
+                    <Select
+                      value={filters.priority?.join(',') || ''}
+                      onValueChange={(value) => 
+                        setFilters({ ...filters, priority: value ? value.split(',') as any : [] })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="All priorities" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all-priorities">All Priorities</SelectItem>
+                        {THREAD_PRIORITIES.map(priority => (
+                          <SelectItem key={priority.value} value={priority.value}>
+                            <div className="flex items-center gap-2">
+                              <div className={cn("w-2 h-2 rounded-full", priority.color)} />
+                              {priority.label}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-6">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFilters({ search: '', project_id: '', priority: [], unread_only: false, archived: false })}
+                    >
+                      Clear Filters
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-          ) : (
-            <div className="space-y-4">
-              {filteredMessages.map((message) => (
-                <Card 
-                  key={message.id}
-                  className={cn(
-                    "cursor-pointer transition-all hover:shadow-md border-l-4",
-                    !message.read_status ? "border-l-blue-500 bg-blue-50/30" : "border-l-transparent",
-                    "hover:border-l-blue-400"
-                  )}
-                  onClick={() => handleMessageClick(message)}
-                >
-                  <CardContent className="p-6">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 space-y-3">
-                        {/* Message Header */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-2">
-                              {getTypeIcon(message.message_type)}
-                              <span className="font-semibold text-sm capitalize">
-                                {message.message_type}
-                              </span>
-                            </div>
-                            
-                            <Badge 
-                              variant="outline" 
-                              className={`${getPriorityColor(message.priority)} text-xs`}
-                            >
-                              {message.priority}
-                            </Badge>
-
-                            {message.attachments_count && message.attachments_count > 0 && (
-                              <Badge variant="outline" className="text-xs">
-                                <Paperclip className="w-3 h-3 mr-1" />
-                                {message.attachments_count}
-                              </Badge>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Clock className="w-3 h-3" />
-                            {formatTimeAgo(message.created_at)}
-                          </div>
-                        </div>
-
-                        {/* Project and Thread Info */}
-                        <div className="flex items-center gap-4 text-sm">
-                          <div className="flex items-center gap-1">
-                            <Building2 className="w-3 h-3 text-muted-foreground" />
-                            <span className="font-medium">{message.project_name}</span>
-                            {message.project_reference && (
-                              <span className="text-muted-foreground">#{message.project_reference}</span>
-                            )}
-                          </div>
-                          
-                          {message.client_name && (
-                            <div className="flex items-center gap-1">
-                              <User className="w-3 h-3 text-muted-foreground" />
-                              <span className="text-muted-foreground">{message.client_name}</span>
-                            </div>
-                          )}
-
-                          {message.region && (
-                            <div className="flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-muted-foreground" />
-                              <span className="text-muted-foreground">{message.region}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Thread Title */}
-                        <div className="flex items-center gap-2">
-                          <MessageSquare className="w-4 h-4 text-muted-foreground" />
-                          <span className="font-medium">{message.thread_title}</span>
-                        </div>
-
-                        {/* Sender Info */}
-                        <div className="flex items-center gap-2 text-sm">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                            <span className="text-blue-600 font-semibold text-xs">
-                              {message.sender_name.charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="font-medium">{message.sender_name}</span>
-                            {message.sender_email && (
-                              <span className="text-muted-foreground ml-2">
-                                {message.sender_email}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Message Preview */}
-                        <div className="bg-muted/30 rounded-lg p-3 border-l-2 border-muted">
-                          <p className="text-sm leading-relaxed line-clamp-3">
-                            {message.content}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Action Arrow */}
-                      <div className="flex-shrink-0">
-                        <ArrowRight className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
           )}
-        </TabsContent>
-      </Tabs>
-
-      {/* Results Summary */}
-      {filteredMessages.length > 0 && (
-        <div className="mt-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            Showing {filteredMessages.length} of {messages.length} messages
-          </p>
         </div>
-      )}
+
+        {/* Thread List */}
+        {filteredThreads.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4">
+            {filteredThreads.map((thread) => (
+              <ThreadListItem
+                key={thread.id}
+                thread={thread}
+                onClick={() => router.push(`/messages/${thread.id}`)}
+              />
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <MessageSquare className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium mb-2">No conversations found</h3>
+              <p className="text-muted-foreground mb-6">
+                {threads.length === 0 
+                  ? "Start your first conversation with your team."
+                  : "No conversations match your current filters."
+                }
+              </p>
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Start Conversation
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Create Thread Dialog */}
+        <CreateThreadDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+        />
+      </div>
     </div>
   )
 }

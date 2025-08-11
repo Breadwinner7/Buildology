@@ -27,9 +27,34 @@ import {
   Clock,
   DollarSign,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Building,
+  Hammer,
+  ClipboardList,
+  Settings,
+  Users,
+  TrendingUpDown
 } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
+import { 
+  useProjectReserves, 
+  useDamageItems, 
+  usePCSums, 
+  useContractorAssessments,
+  useSurveyForms,
+  useReservingMutations,
+  formatCurrency,
+  calculateReserveTotals,
+  calculateDamageItemsTotals,
+  getStatusColor,
+  getUrgencyColor,
+  type ProjectReserve,
+  type DamageItem,
+  type PCSum
+} from '@/hooks/useReserving'
+import { DamageItemForm } from '@/components/forms/DamageItemForm'
+import { SurveyForm } from '@/components/forms/SurveyForm'
+import { ReservesTracker } from '@/components/features/reserves/ReservesTracker'
 
 // Types
 interface ProjectFinancials {
@@ -89,18 +114,27 @@ interface Quote {
 
 // API Functions
 const fetchProjectFinancials = async (projectId: string): Promise<ProjectFinancials | null> => {
-  const { data, error } = await supabase
-    .from('project_financials')
-    .select('*')
-    .eq('project_id', projectId)
-    .single()
-  
-  if (error) {
-    console.error('Error fetching financials:', error)
+  try {
+    const { data, error } = await supabase
+      .from('project_financials')
+      .select('*')
+      .eq('project_id', projectId)
+      .single()
+    
+    if (error) {
+      // If no financial record found, return null silently
+      if (error.code === 'PGRST116') {
+        return null
+      }
+      console.warn('Error fetching financials:', error.message || error)
+      return null
+    }
+    
+    return data
+  } catch (error) {
+    console.warn('Error fetching financials:', error)
     return null
   }
-  
-  return data
 }
 
 const fetchProjectInvoices = async (projectId: string): Promise<Invoice[]> => {
@@ -139,42 +173,6 @@ const fetchProjectQuotes = async (projectId: string): Promise<Quote[]> => {
   return data || []
 }
 
-// Utility functions
-const formatCurrency = (amount: number, currency: string = 'GBP') => {
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: currency
-  }).format(amount)
-}
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  })
-}
-
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'paid':
-    case 'completed':
-    case 'approved':
-      return 'bg-green-100 text-green-800 border-green-200'
-    case 'sent':
-    case 'pending':
-    case 'submitted':
-      return 'bg-blue-100 text-blue-800 border-blue-200'
-    case 'overdue':
-    case 'failed':
-    case 'rejected':
-      return 'bg-red-100 text-red-800 border-red-200'
-    case 'draft':
-      return 'bg-gray-100 text-gray-800 border-gray-200'
-    default:
-      return 'bg-gray-100 text-gray-800 border-gray-200'
-  }
-}
 
 // Financial Metric Card Component
 interface FinancialMetricCardProps {
@@ -248,6 +246,11 @@ const FinancialMetricCard: React.FC<FinancialMetricCardProps> = ({
 export default function ProjectFinancialsPage() {
   const { id: projectId } = useParams()
   const [activeTab, setActiveTab] = useState('overview')
+  
+  // Form states
+  const [showDamageItemForm, setShowDamageItemForm] = useState(false)
+  const [showSurveyForm, setShowSurveyForm] = useState(false)
+  const [editingDamageItem, setEditingDamageItem] = useState<DamageItem | undefined>()
 
   // Data fetching
   const { data: financials, isLoading: financialsLoading, error: financialsError } = useQuery({
@@ -274,6 +277,13 @@ export default function ProjectFinancialsPage() {
     enabled: !!projectId
   })
 
+  // Reserving system data
+  const { data: reserves = [] } = useProjectReserves(projectId as string)
+  const { data: damageItems = [] } = useDamageItems(projectId as string)
+  const { data: pcSums = [] } = usePCSums(projectId as string)
+  const { data: contractorAssessments = [] } = useContractorAssessments(projectId as string)
+  const { data: surveyForms = [] } = useSurveyForms(projectId as string)
+
   if (financialsLoading) {
     return (
       <div className="container mx-auto p-6">
@@ -284,30 +294,94 @@ export default function ProjectFinancialsPage() {
     )
   }
 
-  if (financialsError || !financials) {
+  // Show reserving system even without project_financials record
+  const mockFinancials: ProjectFinancials = {
+    id: `mock-${projectId}`,
+    project_id: projectId as string,
+    budget_total: 0,
+    budget_allocated: 0,
+    budget_spent: 0,
+    budget_remaining: 0,
+    contract_value: 0,
+    invoice_total: 0,
+    payment_received: 0,
+    payment_outstanding: 0,
+    currency: 'GBP',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+
+  const effectiveFinancials = financials || mockFinancials
+
+  // If no financial data exists but user hasn't set up finances yet
+  const showFinancialSetup = !financials && reserves.length === 0 && damageItems.length === 0 && surveyForms.length === 0
+
+  if (financialsLoading) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+        </div>
+      </div>
+    )
+  }
+
+  if (showFinancialSetup) {
     return (
       <div className="container mx-auto p-6">
         <div className="text-center py-12">
           <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
           <h2 className="text-xl font-semibold mb-2">No Financial Data</h2>
           <p className="text-muted-foreground mb-4">
-            Financial tracking will appear here once data is added to this project.
+            Set up project finances or start with damage assessment and reserving.
           </p>
-          <Button>
-            <Plus className="h-4 w-4 mr-2" />
-            Set Up Project Finances
-          </Button>
+          <div className="flex gap-2 justify-center">
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Set Up Project Finances
+            </Button>
+            <Button variant="outline" onClick={() => setShowSurveyForm(true)}>
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Start with Survey
+            </Button>
+            <Button variant="outline" onClick={() => setShowDamageItemForm(true)}>
+              <Hammer className="h-4 w-4 mr-2" />
+              Add Damage Item
+            </Button>
+          </div>
         </div>
+        
+        {/* Form Modals */}
+        <DamageItemForm
+          isOpen={showDamageItemForm}
+          onClose={() => {
+            setShowDamageItemForm(false)
+            setEditingDamageItem(undefined)
+          }}
+          projectId={projectId as string}
+          item={editingDamageItem}
+          onSuccess={() => {
+            setShowDamageItemForm(false)
+            setEditingDamageItem(undefined)
+          }}
+        />
+
+        <SurveyForm
+          isOpen={showSurveyForm}
+          onClose={() => setShowSurveyForm(false)}
+          projectId={projectId as string}
+          onSuccess={() => setShowSurveyForm(false)}
+        />
       </div>
     )
   }
 
-  const budgetUtilization = financials.budget_total > 0 
-    ? (financials.budget_spent / financials.budget_total) * 100 
+  const budgetUtilization = effectiveFinancials.budget_total > 0 
+    ? (effectiveFinancials.budget_spent / effectiveFinancials.budget_total) * 100 
     : 0
 
-  const paymentRate = financials.invoice_total > 0 
-    ? (financials.payment_received / financials.invoice_total) * 100 
+  const paymentRate = effectiveFinancials.invoice_total > 0 
+    ? (effectiveFinancials.payment_received / effectiveFinancials.invoice_total) * 100 
     : 0
 
   const overdueInvoices = invoices.filter(inv => 
@@ -319,6 +393,14 @@ export default function ProjectFinancialsPage() {
   const recentPayments = payments.filter(p => 
     new Date(p.payment_date) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
   )
+
+  // Reserving calculations
+  const currentReserve = calculateReserveTotals(reserves)
+  const damageItemsTotals = calculateDamageItemsTotals(damageItems)
+  const pendingDamageItems = damageItems.filter(item => item.status === 'estimated' || item.status === 'quoted')
+  const emergencyItems = damageItems.filter(item => item.urgency === 'emergency' || item.urgency === 'high')
+  const pendingAssessments = contractorAssessments.filter(a => a.status === 'submitted')
+  const incompleteSurveys = surveyForms.filter(f => f.form_status === 'in_progress')
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -347,37 +429,45 @@ export default function ProjectFinancialsPage() {
       </div>
 
       {/* Financial Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <FinancialMetricCard
           title="Total Budget"
-          value={financials.budget_total}
-          currency={financials.currency}
+          value={effectiveFinancials.budget_total}
+          currency={effectiveFinancials.currency}
           icon={<Target className="h-4 w-4 text-blue-600" />}
-          description={`Contract: ${formatCurrency(financials.contract_value, financials.currency)}`}
+          description={`Contract: ${formatCurrency(effectiveFinancials.contract_value, effectiveFinancials.currency)}`}
         />
 
         <FinancialMetricCard
           title="Budget Spent"
-          value={financials.budget_spent}
-          currency={financials.currency}
+          value={effectiveFinancials.budget_spent}
+          currency={effectiveFinancials.currency}
           progress={budgetUtilization}
-          status={financials.budget_spent > financials.budget_allocated ? 'warning' : 'normal'}
+          status={effectiveFinancials.budget_spent > effectiveFinancials.budget_allocated ? 'warning' : 'normal'}
           icon={<TrendingUp className="h-4 w-4 text-green-600" />}
           description={`${budgetUtilization.toFixed(1)}% of total budget`}
         />
 
         <FinancialMetricCard
+          title="Current Reserve"
+          value={currentReserve?.total_reserve_amount || 0}
+          currency={currentReserve?.currency || effectiveFinancials.currency}
+          icon={<Building className="h-4 w-4 text-indigo-600" />}
+          description={currentReserve ? `${currentReserve.reserve_type} reserve` : 'No reserve set'}
+        />
+
+        <FinancialMetricCard
           title="Invoiced Amount"
-          value={financials.invoice_total}
-          currency={financials.currency}
+          value={effectiveFinancials.invoice_total}
+          currency={effectiveFinancials.currency}
           icon={<Receipt className="h-4 w-4 text-purple-600" />}
           description={`${invoices.length} invoice${invoices.length !== 1 ? 's' : ''} raised`}
         />
 
         <FinancialMetricCard
           title="Outstanding"
-          value={financials.payment_outstanding}
-          currency={financials.currency}
+          value={effectiveFinancials.payment_outstanding}
+          currency={effectiveFinancials.currency}
           status={overdueInvoices.length > 0 ? 'critical' : 'normal'}
           icon={<AlertTriangle className="h-4 w-4 text-amber-600" />}
           description={
@@ -389,8 +479,8 @@ export default function ProjectFinancialsPage() {
       </div>
 
       {/* Alert Cards */}
-      {(overdueInvoices.length > 0 || pendingQuotes.length > 0 || recentPayments.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {(overdueInvoices.length > 0 || pendingQuotes.length > 0 || recentPayments.length > 0 || emergencyItems.length > 0 || pendingDamageItems.length > 0 || incompleteSurveys.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {overdueInvoices.length > 0 && (
             <Card className="border-red-200 bg-red-50">
               <CardHeader className="pb-2">
@@ -401,6 +491,50 @@ export default function ProjectFinancialsPage() {
               <CardContent>
                 <p className="text-2xl font-bold text-red-900">{overdueInvoices.length}</p>
                 <p className="text-xs text-red-700">Require immediate attention</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {emergencyItems.length > 0 && (
+            <Card className="border-red-200 bg-red-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-red-800 flex items-center gap-1">
+                  <Hammer className="h-3 w-3" />
+                  Emergency Damage
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-red-900">{emergencyItems.length}</p>
+                <p className="text-xs text-red-700">Urgent repairs needed</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {pendingDamageItems.length > 0 && (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-amber-800">
+                  Pending Assessments
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-amber-900">{pendingDamageItems.length}</p>
+                <p className="text-xs text-amber-700">Awaiting approval</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {incompleteSurveys.length > 0 && (
+            <Card className="border-blue-200 bg-blue-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-blue-800 flex items-center gap-1">
+                  <ClipboardList className="h-3 w-3" />
+                  Incomplete Surveys
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-blue-900">{incompleteSurveys.length}</p>
+                <p className="text-xs text-blue-700">In progress</p>
               </CardContent>
             </Card>
           )}
@@ -437,8 +571,21 @@ export default function ProjectFinancialsPage() {
 
       {/* Detailed Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="reserving">
+            <Building className="h-4 w-4 mr-1" />
+            Reserving
+            {emergencyItems.length > 0 && (
+              <Badge variant="destructive" className="ml-2 text-xs">
+                {emergencyItems.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="damage">
+            <Hammer className="h-4 w-4 mr-1" />
+            Damage
+          </TabsTrigger>
           <TabsTrigger value="invoices">
             Invoices
             {overdueInvoices.length > 0 && (
@@ -464,17 +611,17 @@ export default function ProjectFinancialsPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Budget Allocated</span>
-                    <span>{formatCurrency(financials.budget_allocated, financials.currency)}</span>
+                    <span>{formatCurrency(effectiveFinancials.budget_allocated, effectiveFinancials.currency)}</span>
                   </div>
                   <Progress 
-                    value={(financials.budget_allocated / financials.budget_total) * 100} 
+                    value={(effectiveFinancials.budget_allocated / effectiveFinancials.budget_total) * 100} 
                     className="h-2"
                   />
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Budget Spent</span>
-                    <span>{formatCurrency(financials.budget_spent, financials.currency)}</span>
+                    <span>{formatCurrency(effectiveFinancials.budget_spent, effectiveFinancials.currency)}</span>
                   </div>
                   <Progress 
                     value={budgetUtilization} 
@@ -484,8 +631,8 @@ export default function ProjectFinancialsPage() {
                 <div className="pt-2 border-t">
                   <div className="flex justify-between text-sm font-medium">
                     <span>Remaining</span>
-                    <span className={financials.budget_remaining < 0 ? 'text-red-600' : 'text-green-600'}>
-                      {formatCurrency(financials.budget_remaining, financials.currency)}
+                    <span className={effectiveFinancials.budget_remaining < 0 ? 'text-red-600' : 'text-green-600'}>
+                      {formatCurrency(effectiveFinancials.budget_remaining, effectiveFinancials.currency)}
                     </span>
                   </div>
                 </div>
@@ -502,11 +649,11 @@ export default function ProjectFinancialsPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Total Invoiced</span>
-                    <span>{formatCurrency(financials.invoice_total, financials.currency)}</span>
+                    <span>{formatCurrency(effectiveFinancials.invoice_total, effectiveFinancials.currency)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Payments Received</span>
-                    <span>{formatCurrency(financials.payment_received, financials.currency)}</span>
+                    <span>{formatCurrency(effectiveFinancials.payment_received, effectiveFinancials.currency)}</span>
                   </div>
                   <Progress 
                     value={paymentRate} 
@@ -514,7 +661,7 @@ export default function ProjectFinancialsPage() {
                   />
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span>Payment rate: {paymentRate.toFixed(1)}%</span>
-                    <span>Outstanding: {formatCurrency(financials.payment_outstanding, financials.currency)}</span>
+                    <span>Outstanding: {formatCurrency(effectiveFinancials.payment_outstanding, effectiveFinancials.currency)}</span>
                   </div>
                 </div>
               </CardContent>
@@ -543,7 +690,7 @@ export default function ProjectFinancialsPage() {
                       <Badge className={getStatusColor(invoice.status)}>
                         {invoice.status}
                       </Badge>
-                      <span className="font-medium">{formatCurrency(invoice.total_amount, financials.currency)}</span>
+                      <span className="font-medium">{formatCurrency(invoice.total_amount, effectiveFinancials.currency)}</span>
                     </div>
                   </div>
                 ))}
@@ -562,11 +709,100 @@ export default function ProjectFinancialsPage() {
                       <Badge className={getStatusColor(payment.status)}>
                         {payment.status}
                       </Badge>
-                      <span className="font-medium">{formatCurrency(payment.amount, financials.currency)}</span>
+                      <span className="font-medium">{formatCurrency(payment.amount, effectiveFinancials.currency)}</span>
                     </div>
                   </div>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="reserving" className="space-y-4">
+          <ReservesTracker 
+            projectId={projectId as string}
+            onEditReserve={(reserve) => {
+              // Handle edit reserve logic
+              console.log('Edit reserve:', reserve)
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="damage" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Hammer className="h-5 w-5" />
+                    Damage Items
+                  </CardTitle>
+                  <CardDescription>Detailed breakdown of all assessed damage</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => setShowDamageItemForm(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Item
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {damageItems.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Hammer className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No damage items found</p>
+                  <Button variant="outline" className="mt-2" onClick={() => setShowDamageItemForm(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add First Damage Item
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {damageItems.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{item.item_description}</span>
+                          <Badge className={getStatusColor(item.status)}>
+                            {item.status}
+                          </Badge>
+                          <Badge className={getUrgencyColor(item.urgency)}>
+                            {item.urgency}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span>Location: {item.location || 'Not specified'}</span>
+                          <span>Qty: {item.quantity}</span>
+                          <span>HOD: {item.hod_code?.code || 'N/A'}</span>
+                          {item.damage_extent && (
+                            <span>Extent: {item.damage_extent.replace('_', ' ')}</span>
+                          )}
+                        </div>
+                        {item.surveyor_notes && (
+                          <p className="text-xs text-muted-foreground italic">
+                            "{item.surveyor_notes.substring(0, 100)}{item.surveyor_notes.length > 100 ? '...' : ''}"
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-right">
+                          <p className="font-medium">{formatCurrency(item.total_including_vat)}</p>
+                          <p className="text-xs text-muted-foreground">inc. VAT</p>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            setEditingDamageItem(item)
+                            setShowDamageItemForm(true)
+                          }}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -615,7 +851,7 @@ export default function ProjectFinancialsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="text-right">
-                          <p className="font-medium">{formatCurrency(invoice.total_amount, financials.currency)}</p>
+                          <p className="font-medium">{formatCurrency(invoice.total_amount, effectiveFinancials.currency)}</p>
                           {invoice.paid_at && (
                             <p className="text-xs text-green-600">Paid {formatDate(invoice.paid_at)}</p>
                           )}
@@ -676,7 +912,7 @@ export default function ProjectFinancialsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="text-right">
-                          <p className="font-medium">{formatCurrency(payment.amount, financials.currency)}</p>
+                          <p className="font-medium">{formatCurrency(payment.amount, effectiveFinancials.currency)}</p>
                         </div>
                         <Button variant="ghost" size="sm">
                           <MoreHorizontal className="h-4 w-4" />
@@ -734,7 +970,7 @@ export default function ProjectFinancialsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="text-right">
-                          <p className="font-medium">{formatCurrency(quote.total_amount, financials.currency)}</p>
+                          <p className="font-medium">{formatCurrency(quote.total_amount, effectiveFinancials.currency)}</p>
                         </div>
                         <Button variant="ghost" size="sm">
                           <MoreHorizontal className="h-4 w-4" />
@@ -759,26 +995,26 @@ export default function ProjectFinancialsPage() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Total Budget</span>
-                    <span className="text-lg font-bold">{formatCurrency(financials.budget_total, financials.currency)}</span>
+                    <span className="text-lg font-bold">{formatCurrency(effectiveFinancials.budget_total, effectiveFinancials.currency)}</span>
                   </div>
                   
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm">Allocated</span>
-                      <span className="font-medium">{formatCurrency(financials.budget_allocated, financials.currency)}</span>
+                      <span className="font-medium">{formatCurrency(effectiveFinancials.budget_allocated, effectiveFinancials.currency)}</span>
                     </div>
-                    <Progress value={(financials.budget_allocated / financials.budget_total) * 100} className="h-2" />
+                    <Progress value={(effectiveFinancials.budget_allocated / effectiveFinancials.budget_total) * 100} className="h-2" />
                     
                     <div className="flex justify-between items-center">
                       <span className="text-sm">Spent</span>
-                      <span className="font-medium">{formatCurrency(financials.budget_spent, financials.currency)}</span>
+                      <span className="font-medium">{formatCurrency(effectiveFinancials.budget_spent, effectiveFinancials.currency)}</span>
                     </div>
                     <Progress value={budgetUtilization} className="h-2" />
                     
                     <div className="flex justify-between items-center pt-2 border-t">
                       <span className="text-sm font-medium">Remaining</span>
-                      <span className={`font-bold ${financials.budget_remaining < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {formatCurrency(financials.budget_remaining, financials.currency)}
+                      <span className={`font-bold ${effectiveFinancials.budget_remaining < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {formatCurrency(effectiveFinancials.budget_remaining, effectiveFinancials.currency)}
                       </span>
                     </div>
                   </div>
@@ -815,18 +1051,18 @@ export default function ProjectFinancialsPage() {
                 <div className="pt-4">
                   <div className="flex items-center gap-2 mb-2">
                     <div className={`w-3 h-3 rounded-full ${
-                      financials.budget_remaining < 0 ? 'bg-red-500' :
+                      effectiveFinancials.budget_remaining < 0 ? 'bg-red-500' :
                       budgetUtilization > 90 ? 'bg-amber-500' :
                       'bg-green-500'
                     }`} />
                     <span className="text-sm font-medium">
-                      {financials.budget_remaining < 0 ? 'Over Budget' :
+                      {effectiveFinancials.budget_remaining < 0 ? 'Over Budget' :
                        budgetUtilization > 90 ? 'Near Budget Limit' :
                        'Budget Healthy'}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {financials.budget_remaining < 0 
+                    {effectiveFinancials.budget_remaining < 0 
                       ? 'Project is over budget and requires attention'
                       : budgetUtilization > 90 
                       ? 'Approaching budget limit, monitor spending'
@@ -839,6 +1075,28 @@ export default function ProjectFinancialsPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Form Modals */}
+      <DamageItemForm
+        isOpen={showDamageItemForm}
+        onClose={() => {
+          setShowDamageItemForm(false)
+          setEditingDamageItem(undefined)
+        }}
+        projectId={projectId as string}
+        item={editingDamageItem}
+        onSuccess={() => {
+          setShowDamageItemForm(false)
+          setEditingDamageItem(undefined)
+        }}
+      />
+
+      <SurveyForm
+        isOpen={showSurveyForm}
+        onClose={() => setShowSurveyForm(false)}
+        projectId={projectId as string}
+        onSuccess={() => setShowSurveyForm(false)}
+      />
     </div>
   )
 }

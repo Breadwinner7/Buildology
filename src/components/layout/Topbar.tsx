@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ThemeToggle } from '@/components/shared/ThemeToggle'
 import { UserMenu } from '@/components/shared/UserMenu'
+import { NotificationCenter } from '@/components/notifications/NotificationCenter'
 import { cn } from '@/lib/utils'
 import { 
   Bell, 
@@ -23,7 +24,9 @@ import {
   AlertTriangle,
   Clock,
   FileText,
-  Users
+  Users,
+  Calendar,
+  BarChart3
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -37,13 +40,15 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { supabase } from '@/lib/supabaseClient'
 
-// Enhanced navigation links with Financials
+// Main navigation links for overview pages
 const navLinks = [
   { href: '/dashboard', label: 'Dashboard', icon: Home },
+  { href: '/claims', label: 'Claims', icon: FileText },
   { href: '/projects', label: 'Projects', icon: FolderOpen },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare },
-  { href: '/financials', label: 'Financials', icon: PoundSterling },
-  { href: '/messages', label: 'Messages', icon: MessageSquare },
+  { href: '/estimates', label: 'Estimates', icon: PoundSterling },
+  { href: '/appointments', label: 'Appointments', icon: Calendar },
+  { href: '/compliance', label: 'Compliance', icon: AlertTriangle },
+  { href: '/reports', label: 'Reports & Analytics', icon: BarChart3 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
@@ -360,7 +365,7 @@ export function Topbar() {
 
   return (
     <>
-      <div className="flex h-16 items-center justify-between border-b px-4 sm:px-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-sm sticky top-0 z-50">
+      <div className="flex h-16 items-center justify-between border-b px-4 sm:px-6 glass sticky top-0 z-50 shadow-sm">
         {/* Left Side */}
         <div className="flex items-center gap-4">
           {/* Mobile Menu Button */}
@@ -376,41 +381,51 @@ export function Topbar() {
           {/* Logo */}
           <Link 
             href="/dashboard" 
-            className="flex items-center gap-2 text-xl font-bold tracking-tight text-primary hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2 text-xl font-bold tracking-tight text-gradient hover:scale-105 transition-smooth group"
           >
-            <Building className="h-6 w-6" />
+            <div className="p-1.5 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg group-hover:shadow-xl transition-all">
+              <Building className="h-5 w-5 text-white" />
+            </div>
             <span className="hidden sm:inline">Buildology</span>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex gap-1 ml-6">
+          <nav className="hidden md:flex gap-1 ml-6" role="navigation" aria-label="Main navigation">
             {navLinks.map((link) => {
               const Icon = link.icon
               const isActive = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href))
+              const taskNotifications = notifications.filter(n => n.type === 'task' && n.priority === 'high').length
+              const financialNotifications = criticalCount
               
               return (
                 <Link
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all relative',
+                    'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl transition-smooth relative group',
                     isActive
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      ? 'bg-gradient-to-r from-primary/20 to-primary/10 text-primary shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:scale-105'
                   )}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={`${link.label}${
+                    link.href === '/tasks' && taskNotifications > 0 ? `, ${taskNotifications} high priority tasks` :
+                    link.href === '/financials' && financialNotifications > 0 ? `, ${financialNotifications} critical financial items` :
+                    ''
+                  }`}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-4 w-4" aria-hidden="true" />
                   {link.label}
                   
                   {/* Add badge for critical items on relevant pages */}
-                  {link.href === '/tasks' && notifications.filter(n => n.type === 'task' && n.priority === 'high').length > 0 && (
-                    <Badge variant="destructive" className="text-xs px-1 py-0 h-4 min-w-4">
-                      {notifications.filter(n => n.type === 'task' && n.priority === 'high').length}
+                  {link.href === '/tasks' && taskNotifications > 0 && (
+                    <Badge variant="destructive" className="text-xs px-1 py-0 h-4 min-w-4" aria-label={`${taskNotifications} high priority tasks`}>
+                      {taskNotifications}
                     </Badge>
                   )}
-                  {link.href === '/financials' && criticalCount > 0 && (
-                    <Badge variant="destructive" className="text-xs px-1 py-0 h-4 min-w-4">
-                      {criticalCount}
+                  {link.href === '/financials' && financialNotifications > 0 && (
+                    <Badge variant="destructive" className="text-xs px-1 py-0 h-4 min-w-4" aria-label={`${financialNotifications} critical financial items`}>
+                      {financialNotifications}
                     </Badge>
                   )}
                 </Link>
@@ -421,8 +436,13 @@ export function Topbar() {
 
         {/* Center - Enhanced Search */}
         <div className="hidden lg:flex flex-1 max-w-md mx-8">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="relative w-full group">
+            <div className={cn(
+              "absolute left-3 top-1/2 transform -translate-y-1/2 transition-colors duration-200",
+              searchFocused ? "text-primary" : "text-muted-foreground"
+            )}>
+              <Search className="h-4 w-4" />
+            </div>
             <Input
               type="search"
               placeholder="Search projects, tasks, invoices, documents..."
@@ -436,10 +456,18 @@ export function Topbar() {
                 }
               }}
               className={cn(
-                "pl-10 pr-4 transition-all duration-200",
-                searchFocused && "ring-2 ring-primary/20"
+                "pl-10 pr-4 h-10 rounded-xl border-0 bg-muted/50 backdrop-blur-sm transition-all duration-200",
+                "hover:bg-muted/80 focus:bg-background/80 focus:ring-2 focus:ring-primary/20",
+                "placeholder:text-muted-foreground/60"
               )}
             />
+            <kbd className={cn(
+              "absolute right-3 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs rounded border bg-muted/50 text-muted-foreground",
+              "transition-opacity duration-200 hidden sm:inline-flex",
+              searchFocused && "opacity-0"
+            )}>
+              ⌘K
+            </kbd>
           </div>
         </div>
 
@@ -450,94 +478,8 @@ export function Topbar() {
             <Search className="h-5 w-5" />
           </Button>
 
-          {/* Enhanced Notifications */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="relative">
-                <Bell className="h-5 w-5" />
-                {unreadCount > 0 && (
-                  <Badge 
-                    variant={criticalCount > 0 ? "destructive" : "default"}
-                    className="absolute -top-1 -right-1 h-5 w-5 p-0 text-xs flex items-center justify-center"
-                  >
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </Badge>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-96">
-              <div className="flex items-center justify-between p-3">
-                <h4 className="font-semibold">Notifications</h4>
-                <div className="flex items-center gap-2">
-                  {criticalCount > 0 && (
-                    <Badge variant="destructive" className="text-xs">
-                      {criticalCount} critical
-                    </Badge>
-                  )}
-                  {unreadCount > 0 && (
-                    <Button variant="ghost" size="sm" className="text-xs" onClick={markAllAsRead}>
-                      Mark all read
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <DropdownMenuSeparator />
-              
-              <div className="max-h-96 overflow-y-auto">
-                {notificationsLoading ? (
-                  <div className="p-4 text-center text-muted-foreground">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
-                    <p className="mt-2 text-sm">Loading notifications...</p>
-                  </div>
-                ) : notifications.length > 0 ? (
-                  notifications.map((notification) => (
-                    <DropdownMenuItem key={notification.id} className="flex flex-col items-start p-3 cursor-pointer hover:bg-muted/50" asChild>
-                      <Link href={notification.link || '#'}>
-                        <div className="flex items-start justify-between w-full">
-                          <div className="flex items-start gap-3 flex-1">
-                            <div className={cn("p-1 rounded", getNotificationColor(notification.priority), "bg-current/10")}>
-                              {getNotificationIcon(notification.type)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <h5 className="font-medium text-sm truncate">{notification.title}</h5>
-                                {notification.unread && (
-                                  <div className="h-2 w-2 bg-primary rounded-full flex-shrink-0" />
-                                )}
-                                {notification.priority === 'critical' && (
-                                  <AlertTriangle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{notification.message}</p>
-                              <div className="flex items-center justify-between mt-2">
-                                <span className="text-xs text-muted-foreground">{notification.time}</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {notification.type}
-                                </Badge>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    </DropdownMenuItem>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-muted-foreground">
-                    <Bell className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No notifications</p>
-                    <p className="text-xs">You're all caught up!</p>
-                  </div>
-                )}
-              </div>
-              
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/notifications" className="w-full text-center text-sm font-medium">
-                  View all notifications
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Enhanced Notification Center */}
+          <NotificationCenter />
 
           <ThemeToggle />
           <UserMenu />
@@ -546,17 +488,19 @@ export function Topbar() {
 
       {/* Enhanced Breadcrumbs */}
       {breadcrumbs.length > 0 && (
-        <div className="border-b px-4 sm:px-6 py-2 bg-muted/30">
+        <div className="border-b px-4 sm:px-6 py-3 bg-gradient-to-r from-muted/20 to-muted/10 backdrop-blur-sm">
           <nav className="flex items-center space-x-1 text-sm">
             {breadcrumbs.map((crumb, index) => (
-              <div key={crumb.id} className="flex items-center">
-                {index > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground mx-1" />}
+              <div key={crumb.id} className="flex items-center animate-slide-in" style={{ animationDelay: `${index * 50}ms` }}>
+                {index > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground/60 mx-1" />}
                 {index === breadcrumbs.length - 1 ? (
-                  <span className="font-medium text-foreground">{crumb.label}</span>
+                  <span className="font-medium text-foreground px-2 py-1 rounded-lg bg-primary/10 text-primary">
+                    {crumb.label}
+                  </span>
                 ) : (
                   <Link
                     href={crumb.href}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    className="text-muted-foreground hover:text-foreground transition-smooth px-2 py-1 rounded-lg hover:bg-muted/50"
                   >
                     {crumb.label}
                   </Link>
@@ -569,8 +513,8 @@ export function Topbar() {
 
       {/* Enhanced Mobile Navigation Menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-b bg-background">
-          <nav className="px-4 py-2 space-y-1">
+        <div className="md:hidden border-b bg-background" role="dialog" aria-modal="true" aria-label="Mobile navigation menu">
+          <nav className="px-4 py-2 space-y-1" role="navigation" aria-label="Mobile main navigation">
             {navLinks.map((link) => {
               const Icon = link.icon
               const isActive = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href))
@@ -590,13 +534,15 @@ export function Topbar() {
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   )}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={`${link.label}${criticalNotifications > 0 ? `, ${criticalNotifications} critical items` : ''}`}
                 >
                   <div className="flex items-center gap-3">
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-4 w-4" aria-hidden="true" />
                     {link.label}
                   </div>
                   {criticalNotifications > 0 && (
-                    <Badge variant="destructive" className="text-xs">
+                    <Badge variant="destructive" className="text-xs" aria-label={`${criticalNotifications} critical items`}>
                       {criticalNotifications}
                     </Badge>
                   )}
@@ -607,8 +553,10 @@ export function Topbar() {
             {/* Mobile Search */}
             <div className="pt-2">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                <Label htmlFor="mobile-search" className="sr-only">Search</Label>
                 <Input
+                  id="mobile-search"
                   type="search"
                   placeholder="Search..."
                   value={searchQuery}
@@ -620,7 +568,11 @@ export function Topbar() {
                     }
                   }}
                   className="pl-10"
+                  aria-describedby="mobile-search-description"
                 />
+                <span id="mobile-search-description" className="sr-only">
+                  Search projects, tasks, invoices, and documents
+                </span>
               </div>
             </div>
           </nav>

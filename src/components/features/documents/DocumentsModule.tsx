@@ -3,6 +3,13 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useUser } from '@/hooks/useUser'
+import { 
+  useDocumentApprovals, 
+  useApprovalMutations,
+  getApprovalStatusColor,
+  getApprovalStatusLabel,
+  getRequiredApprovalLevel
+} from '@/hooks/useDocumentApprovals'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +26,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select'
 import { format } from 'date-fns'
+import { cn } from '@/lib/utils'
 import { 
   FileText, 
   Trash2, 
@@ -34,7 +42,14 @@ import {
   Filter,
   Grid,
   List,
-  Edit
+  Edit,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  Shield,
+  Users,
+  MessageSquare
 } from 'lucide-react'
 
 interface Document {
@@ -46,9 +61,23 @@ interface Document {
   uploaded_at: string
   user_id: string
   file_size?: number
+  workflow_stage?: string
+  approval_status?: 'pending' | 'approved' | 'rejected' | 'auto_approved'
+  approved_by?: string
+  approved_at?: string
+  visibility_level?: 'internal' | 'contractors' | 'customers' | 'public'
   uploaded_by?: {
+    id: string
     email: string
-    full_name?: string
+    first_name?: string
+    surname?: string
+    preferred_name?: string
+  }
+  approved_by_user?: {
+    id: string
+    first_name: string
+    surname: string
+    role: string
   }
 }
 
@@ -108,7 +137,16 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState('')
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
+  const [approvalDocument, setApprovalDocument] = useState<Document | null>(null)
+  const [approvalComments, setApprovalComments] = useState('')
+  const [rejectionReason, setRejectionReason] = useState('')
+  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'approved'>('all')
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Approval mutations
+  const { approveDocument, rejectDocument } = useApprovalMutations()
 
   useEffect(() => {
     console.log('🎯 DocumentsModule received projectId:', projectId, typeof projectId)
@@ -132,7 +170,12 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
     try {
       // Check authentication
       const { data: { user }, error: userError } = await supabase.auth.getUser()
-      console.log('👤 Current user:', { userId: user?.id, userError })
+      console.log('👤 Current user:', { 
+        userId: user?.id, 
+        userError,
+        userEmail: user?.email,
+        userRole: user?.user_metadata?.role 
+      })
       
       if (!user) {
         console.error('❌ No authenticated user found')
@@ -143,58 +186,109 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
         })
         return
       }
-      
-      // Try with join first
-      console.log('🔍 Attempting query with user_profiles join...')
-const { data, error } = await supabase
-  .from('documents')
-  .select(`
-    *,
-    user_profiles:documents_user_id_fkey (
-      id,
-      email,
-      first_name,
-      surname,
-      preferred_name
-    )
-  `)
-  .eq('project_id', projectId)
-  .order('uploaded_at', { ascending: false });
 
-      console.log('📄 Query result:', { 
-        dataCount: data?.length, 
-        error,
-        errorCode: error?.code,
-        errorMessage: error?.message 
+      // Check if user profile exists and is active
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('id, role, is_active')
+        .eq('id', user.id)
+        .single()
+
+      console.log('👤 User profile:', { 
+        profile, 
+        profileError,
+        isActive: profile?.is_active
       })
 
-      if (error) {
-        console.error('❌ Join query failed, trying simple query:', error)
-        
-        // Fallback to simple query without join
-        const { data: simpleData, error: simpleError } = await supabase
-          .from('documents')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('uploaded_at', { ascending: false })
-        
-        if (simpleError) {
-          throw simpleError
-        }
-        
-        console.log('✅ Fallback query successful:', simpleData?.length || 0)
-        setDocuments(simpleData || [])
-        
+      if (profileError || !profile || !profile.is_active) {
+        console.error('❌ User profile issue:', { profileError, profile })
         toast({
-          title: "Partial Success",
-          description: "Documents loaded, but user info unavailable",
-          variant: "default",
+          title: "Profile Error",
+          description: "User profile not found or inactive",
+          variant: "destructive",
+        })
+        return
+      }
+      
+      // Now that RLS is fixed, try the normal document query
+      console.log('🔍 Fetching documents with fixed RLS...')
+      console.log('🔍 Project ID being queried:', projectId, typeof projectId)
+      
+      const { data: documentsData, error: documentsError } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('uploaded_at', { ascending: false })
+
+      console.log('📄 Documents query result:', { 
+        dataCount: documentsData?.length, 
+        error: documentsError,
+        errorCode: documentsError?.code,
+        errorMessage: documentsError?.message,
+        sampleDoc: documentsData?.[0]
+      })
+
+      if (documentsError) {
+        console.error('❌ Document query failed:', documentsError)
+        toast({
+          title: "Query Error",
+          description: `Failed to load documents: ${documentsError.message}`,
+          variant: "destructive",
         })
         return
       }
 
-      console.log('✅ Successfully fetched documents with user info:', data?.length || 0)
-      setDocuments(data || [])
+      if (!documentsData || documentsData.length === 0) {
+        console.log('📄 No documents found for project:', projectId)
+        setDocuments([])
+        return
+      }
+
+      // Manually fetch user data for each document
+      console.log('🔍 Enriching documents with user data...')
+      const enrichedData = await Promise.all(
+        documentsData.map(async (doc) => {
+          let uploaded_by = null
+          let approved_by_user = null
+          
+          // Fetch uploaded_by user data
+          if (doc.user_id) {
+            try {
+              const { data: userData } = await supabase
+                .from('user_profiles')
+                .select('id, email, first_name, surname, preferred_name')
+                .eq('id', doc.user_id)
+                .single()
+              uploaded_by = userData
+            } catch (error) {
+              console.log('Could not fetch user data for:', doc.user_id)
+            }
+          }
+          
+          // Fetch approved_by user data
+          if (doc.approved_by) {
+            try {
+              const { data: approverData } = await supabase
+                .from('user_profiles')
+                .select('id, first_name, surname, role')
+                .eq('id', doc.approved_by)
+                .single()
+              approved_by_user = approverData
+            } catch (error) {
+              console.log('Could not fetch approver data for:', doc.approved_by)
+            }
+          }
+          
+          return {
+            ...doc,
+            uploaded_by,
+            approved_by_user
+          }
+        })
+      )
+      
+      console.log('✅ Successfully fetched and enriched documents:', enrichedData.length)
+      setDocuments(enrichedData)
       
     } catch (error: any) {
       console.error('💥 Unexpected error:', error)
@@ -214,6 +308,27 @@ const { data, error } = await supabase
       return `File type ${file.type} is not allowed for ${file.name}.`
     }
     return null
+  }
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (files) {
+      setSelectedFiles(Array.from(files))
+    } else {
+      setSelectedFiles([])
+    }
+  }
+
+  const removeFile = (index: number) => {
+    const newFiles = selectedFiles.filter((_, i) => i !== index)
+    setSelectedFiles(newFiles)
+    
+    // Update the file input
+    if (fileInputRef.current) {
+      const dt = new DataTransfer()
+      newFiles.forEach(file => dt.items.add(file))
+      fileInputRef.current.files = dt.files
+    }
   }
 
   const handleUpload = async () => {
@@ -352,6 +467,7 @@ const { data, error } = await supabase
       setUploadProgress([])
       setUploading(false)
       setNote('')
+      setSelectedFiles([])
       if (fileInputRef.current) fileInputRef.current.value = ''
       fetchDocuments()
     }, 2000)
@@ -419,6 +535,67 @@ const { data, error } = await supabase
       toast({
         title: "Error",
         description: "Failed to delete document",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleApprove = (doc: Document) => {
+    setApprovalDocument(doc)
+    setApprovalDialogOpen(true)
+  }
+
+  const handleApproveDocument = async () => {
+    if (!approvalDocument) return
+
+    try {
+      const requiredLevel = getRequiredApprovalLevel(approvalDocument.type)
+      await approveDocument.mutateAsync({ 
+        documentId: approvalDocument.id, 
+        approvalLevel: requiredLevel,
+        visibility: approvalDocument.visibility_level || 'internal'
+      })
+      
+      toast({
+        title: "Document Approved",
+        description: `${approvalDocument.name} has been approved`,
+      })
+      
+      setApprovalDialogOpen(false)
+      setApprovalDocument(null)
+      setApprovalComments('')
+      fetchDocuments()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to approve document: ${error.message}`,
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleRejectDocument = async () => {
+    if (!approvalDocument || !rejectionReason.trim()) return
+
+    try {
+      await rejectDocument.mutateAsync({ 
+        documentId: approvalDocument.id, 
+        reason: rejectionReason.trim()
+      })
+      
+      toast({
+        title: "Document Rejected",
+        description: `${approvalDocument.name} has been rejected`,
+      })
+      
+      setApprovalDialogOpen(false)
+      setApprovalDocument(null)
+      setRejectionReason('')
+      fetchDocuments()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to reject document: ${error.message}`,
         variant: "destructive",
       })
     }
@@ -493,9 +670,27 @@ const { data, error } = await supabase
         doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.note?.toLowerCase().includes(searchQuery.toLowerCase())
       
-      return matchesType && matchesSearch
+      // Filter by active tab
+      let matchesTab = true
+      if (activeTab === 'pending') {
+        matchesTab = doc.approval_status === 'pending'
+      } else if (activeTab === 'approved') {
+        matchesTab = doc.approval_status === 'approved'
+      }
+      
+      return matchesType && matchesSearch && matchesTab
     })
-  }, [documents, filteredType, searchQuery])
+  }, [documents, filteredType, searchQuery, activeTab])
+
+  // Document statistics
+  const documentStats = useMemo(() => {
+    const total = documents.length
+    const pending = documents.filter(d => d.approval_status === 'pending').length
+    const approved = documents.filter(d => d.approval_status === 'approved').length
+    const rejected = documents.filter(d => d.approval_status === 'rejected').length
+    
+    return { total, pending, approved, rejected }
+  }, [documents])
 
   const isImage = (filename: string) => /\.(jpg|jpeg|png|gif|webp)$/i.test(filename)
   const isPdf = (filename: string) => /\.pdf$/i.test(filename)
@@ -613,9 +808,21 @@ const { data, error } = await supabase
     )
   }
 
-  const DocumentCard = ({ doc }: { doc: Document }) => (
-    <Card className="group hover:shadow-lg transition-all duration-200 border-0 shadow-sm hover:scale-[1.02]">
-      <CardContent className="p-4 h-full flex flex-col">
+  const DocumentCard = ({ doc }: { doc: Document }) => {
+    // Add defensive checks
+    if (!doc) {
+      console.warn('DocumentCard received null/undefined document')
+      return null
+    }
+
+    if (!doc.name || !doc.type || !doc.uploaded_at) {
+      console.warn('DocumentCard received incomplete document:', doc)
+      return null
+    }
+
+    return (
+      <Card className="group hover:shadow-lg transition-all duration-200 border-0 shadow-sm hover:scale-[1.02]">
+        <CardContent className="p-4 h-full flex flex-col">
         {/* Preview */}
         <div className="aspect-video bg-gradient-to-br from-muted/50 to-muted rounded-xl mb-3 overflow-hidden relative shadow-inner">
           {isImage(doc.name) ? (
@@ -649,11 +856,18 @@ const { data, error } = await supabase
             </div>
           </div>
           
-          {/* File type indicator */}
-          <div className="absolute top-2 right-2">
+          {/* File type and approval status indicators */}
+          <div className="absolute top-2 right-2 flex flex-col gap-1">
             <Badge variant="secondary" className="text-xs shadow-sm">
               {doc.type}
             </Badge>
+            {doc.approval_status && (
+              <Badge 
+                className={cn("text-xs shadow-sm text-white", getApprovalStatusColor(doc.approval_status))}
+              >
+                {getApprovalStatusLabel(doc.approval_status)}
+              </Badge>
+            )}
           </div>
         </div>
 
@@ -665,22 +879,39 @@ const { data, error } = await supabase
           
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="outline" className="text-xs">
-              {doc.type}
+              {doc.type || 'Unknown'}
             </Badge>
             <span>{formatFileSize(doc.file_size)}</span>
           </div>
 
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Calendar className="w-3 h-3" />
-            <span title={format(new Date(doc.uploaded_at), 'PPpp')}>
-              {format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a')}
+            <span title={doc.uploaded_at ? format(new Date(doc.uploaded_at), 'PPpp') : 'Unknown date'}>
+              {doc.uploaded_at ? format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a') : 'Unknown date'}
             </span>
           </div>
 
           {doc.uploaded_by && (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <User className="w-3 h-3" />
-              {doc.uploaded_by.full_name || doc.uploaded_by.email}
+              {doc.uploaded_by.preferred_name || 
+               (doc.uploaded_by.first_name && doc.uploaded_by.surname ? 
+                `${doc.uploaded_by.first_name} ${doc.uploaded_by.surname}` : 
+                doc.uploaded_by.email)}
+            </div>
+          )}
+
+          {doc.approved_by_user && (
+            <div className="flex items-center gap-1 text-xs text-green-600">
+              <CheckCircle className="w-3 h-3" />
+              <span>Approved by {doc.approved_by_user.first_name} {doc.approved_by_user.surname}</span>
+            </div>
+          )}
+
+          {doc.workflow_stage && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Shield className="w-3 h-3" />
+              <span className="capitalize">{doc.workflow_stage.replace('_', ' ')}</span>
             </div>
           )}
 
@@ -721,6 +952,17 @@ const { data, error } = await supabase
                 <Download className="w-4 h-4 mr-2" />
                 Download
               </DropdownMenuItem>
+              
+              {/* Approval actions for authorized users */}
+              {isAdmin && doc.approval_status === 'pending' && (
+                <>
+                  <DropdownMenuItem onClick={() => handleApprove(doc)} className="cursor-pointer text-green-600">
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Review/Approve
+                  </DropdownMenuItem>
+                </>
+              )}
+              
               {(isAdmin || doc.user_id === user?.id) && (
                 <>
                   <DropdownMenuItem onClick={() => handleEdit(doc)} className="cursor-pointer">
@@ -741,7 +983,8 @@ const { data, error } = await supabase
         </div>
       </CardContent>
     </Card>
-  )
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -750,12 +993,29 @@ const { data, error } = await supabase
         <div>
           <h2 className="text-2xl font-bold">Project Documents</h2>
           <p className="text-muted-foreground">
-            Upload and manage documents for this project
+            Upload and manage documents with approval workflows
           </p>
         </div>
-        <Badge variant="outline">
-          {documents.length} document{documents.length !== 1 ? 's' : ''}
-        </Badge>
+        <div className="flex items-center gap-4">
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div>
+              <div className="text-lg font-bold">{documentStats.total}</div>
+              <div className="text-xs text-muted-foreground">Total</div>
+            </div>
+            <div>
+              <div className="text-lg font-bold text-yellow-600">{documentStats.pending}</div>
+              <div className="text-xs text-muted-foreground">Pending</div>
+            </div>
+            <div>
+              <div className="text-lg font-bold text-green-600">{documentStats.approved}</div>
+              <div className="text-xs text-muted-foreground">Approved</div>
+            </div>
+            <div>
+              <div className="text-lg font-bold text-red-600">{documentStats.rejected}</div>
+              <div className="text-xs text-muted-foreground">Rejected</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Upload Section */}
@@ -794,12 +1054,13 @@ const { data, error } = await supabase
                   type="file"
                   multiple
                   ref={fileInputRef}
+                  onChange={handleFileChange}
                   accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
                 <div className="flex items-center justify-center w-full h-10 px-3 py-2 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer">
                   <Upload className="w-4 h-4 mr-2" />
-                  Choose Files
+                  {selectedFiles.length > 0 ? `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} selected` : 'Choose Files'}
                 </div>
               </div>
             </div>
@@ -820,13 +1081,47 @@ const { data, error } = await supabase
               <Label>&nbsp;</Label>
               <Button
                 onClick={handleUpload}
-                disabled={uploading}
+                disabled={uploading || selectedFiles.length === 0}
                 className="w-full"
               >
                 {uploading ? 'Uploading...' : 'Upload Files'}
               </Button>
             </div>
           </div>
+
+          {/* Selected Files Preview */}
+          {selectedFiles.length > 0 && (
+            <div className="space-y-2">
+              <Label>Selected Files ({selectedFiles.length})</Label>
+              <div className="max-h-32 overflow-y-auto space-y-2">
+                {selectedFiles.map((file, index) => (
+                  <div key={index} className="flex items-center justify-between p-2 bg-muted/50 rounded-md">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="flex-shrink-0">
+                        {getFileIcon(file.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" title={file.name}>
+                          {file.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatFileSize(file.size)}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeFile(index)}
+                      className="flex-shrink-0 h-6 w-6 p-0"
+                    >
+                      <XCircle className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Upload Progress */}
           {uploadProgress.length > 0 && (
@@ -854,6 +1149,21 @@ const { data, error } = await supabase
           )}
         </CardContent>
       </Card>
+
+      {/* Approval Workflow Tabs */}
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="all">All Documents ({documentStats.total})</TabsTrigger>
+          <TabsTrigger value="pending">
+            <Clock className="w-4 h-4 mr-2" />
+            Pending Approval ({documentStats.pending})
+          </TabsTrigger>
+          <TabsTrigger value="approved">
+            <CheckCircle className="w-4 h-4 mr-2" />
+            Approved ({documentStats.approved})
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {/* Filters and Search */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
@@ -922,9 +1232,20 @@ const { data, error } = await supabase
             ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
             : "space-y-2"
         }>
-          {filteredDocuments.map((doc) => (
-            viewMode === 'grid' ? (
-              <DocumentCard key={doc.id} doc={doc} />
+          {filteredDocuments.map((doc, index) => {
+            // Debug log for first few documents
+            if (index < 3) {
+              console.log(`📄 Document ${index}:`, {
+                id: doc.id,
+                name: doc.name,
+                type: doc.type,
+                uploaded_at: doc.uploaded_at,
+                hasRequiredFields: !!(doc.id && doc.name && doc.type && doc.uploaded_at)
+              })
+            }
+            
+            return viewMode === 'grid' ? (
+              <DocumentCard key={doc.id || index} doc={doc} />
             ) : (
               <Card key={doc.id} className="hover:shadow-sm transition-shadow">
                 <CardContent className="p-4">
@@ -937,8 +1258,8 @@ const { data, error } = await supabase
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span>{doc.type}</span>
                         <span>{formatFileSize(doc.file_size)}</span>
-                        <span title={format(new Date(doc.uploaded_at), 'PPpp')}>
-                          {format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a')}
+                        <span title={doc.uploaded_at ? format(new Date(doc.uploaded_at), 'PPpp') : 'Unknown date'}>
+                          {doc.uploaded_at ? format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a') : 'Unknown date'}
                         </span>
                       </div>
                     </div>
@@ -961,7 +1282,7 @@ const { data, error } = await supabase
                 </CardContent>
               </Card>
             )
-          ))}
+          })}
         </div>
       )}
 
@@ -1022,6 +1343,79 @@ const { data, error } = await supabase
               Save Changes
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Approval Dialog */}
+      <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Review Document</DialogTitle>
+            <DialogDescription>
+              Review and approve or reject this document
+            </DialogDescription>
+          </DialogHeader>
+          
+          {approvalDocument && (
+            <div className="space-y-4">
+              <div className="border rounded-lg p-3 bg-muted/50">
+                <h4 className="font-medium">{approvalDocument.name}</h4>
+                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                  <span>{approvalDocument.type}</span>
+                  <span>{formatFileSize(approvalDocument.file_size)}</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={cn("text-xs", getApprovalStatusColor(approvalDocument.approval_status || 'pending'))}>
+                    {getApprovalStatusLabel(approvalDocument.approval_status || 'pending')}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Approval Comments (Optional)</Label>
+                <Textarea
+                  value={approvalComments}
+                  onChange={(e) => setApprovalComments(e.target.value)}
+                  placeholder="Add any comments about this approval..."
+                  rows={3}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Rejection Reason (if rejecting)</Label>
+                <Textarea
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  placeholder="Provide reason for rejection..."
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setApprovalDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  variant="destructive"
+                  onClick={handleRejectDocument}
+                  disabled={!rejectionReason.trim() || rejectDocument.isPending}
+                >
+                  <XCircle className="w-4 h-4 mr-2" />
+                  Reject
+                </Button>
+                <Button 
+                  onClick={handleApproveDocument}
+                  disabled={approveDocument.isPending}
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Approve
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

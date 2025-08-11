@@ -1,19 +1,21 @@
-// src/components/layout/AdaptiveNavigation.tsx
+'use client'
+
+import React, { useState, useEffect } from 'react'
+import { MobileBottomNavigation } from './MobileBottomNavigation'
+
 export const AdaptiveNavigation: React.FC = () => {
-  const { userProfile, getNavigationItems } = useUKInsurancePermissions();
-  const navigationItems = getNavigationItems();
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(false)
   
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+    const checkMobile = () => setIsMobile(window.innerWidth < 768)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   if (isMobile) {
-    return <MobileBottomNavigation items={navigationItems} />;
+    return <MobileBottomNavigation />
   }
 
-  return <DesktopSidebarNavigation items={navigationItems} />;
-};
+  return null // Desktop navigation is handled by Topbar
+}

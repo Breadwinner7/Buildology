@@ -1,4 +1,6 @@
 // lib/permissions.ts - Comprehensive UK Insurance Permissions System
+import { useState, useEffect } from 'react'
+import { supabase } from './supabaseClient'
 export const UK_INSURANCE_PERMISSIONS = {
   // System Administration
   SYSTEM_ADMIN: 'system.admin',
@@ -191,11 +193,11 @@ export function useUKInsurancePermissions() {
         // Get comprehensive user profile with permissions
         const { data: profile, error } = await supabase
           .from('user_profiles')
-          .select(\`
+          .select(`
             *,
             organisation:organisations(*),
             role_permissions!inner(permission)
-          \`)
+          `)
           .eq('email', user.email)
           .single();
 
@@ -352,7 +354,7 @@ export function useUKInsurancePermissions() {
 }
 
 // Enhanced Projects/Claims page useEffect with sophisticated filtering
-export const enhancedClaimsPageUseEffect = \`
+export const enhancedClaimsPageUseEffect = `
 useEffect(() => {
   const fetchClaims = async () => {
     try {
@@ -369,11 +371,11 @@ useEffect(() => {
       // Get user profile with permissions
       const { data: userProfile, error: profileError } = await supabase
         .from('user_profiles')
-        .select(\\\`
+        .select(\`
           *,
           organisation:organisations(*),
           role_permissions!inner(permission)
-        \\\`)
+        \`)
         .eq('email', user.email)
         .single();
 
@@ -390,7 +392,7 @@ useEffect(() => {
       setUserPermissions(permissions);
 
       console.log('👤 User loaded:', {
-        name: \\\`\\\${userProfile.first_name} \\\${userProfile.surname}\\\`,
+        name: \`\${userProfile.first_name} \${userProfile.surname}\`,
         role: userProfile.role,
         category: category,
         organisation: userProfile.organisation?.name,
@@ -400,12 +402,12 @@ useEffect(() => {
       // Build claims query based on user's role and permissions
       let claimsQuery = supabase
         .from('projects')
-        .select(\\\`
+        .select(\`
           *,
           organisation:organisations(name, type),
           primary_handler:user_profiles!primary_handler_id(first_name, surname, email),
           project_members!inner(role_on_claim, user_id)
-        \\\`);
+        \`);
 
       // Apply filtering based on user category and permissions
       if (category === 'INSURER_STAFF') {
@@ -418,7 +420,7 @@ useEffect(() => {
           console.log('🏢 Organisation access - viewing org claims');
         } else if (permissions.includes('claims.view_team')) {
           // Team access (claims managed by this user or their team)
-          claimsQuery = claimsQuery.or(\\\`primary_handler_id.eq.\\\${userProfile.id},supervising_manager_id.eq.\\\${userProfile.id}\\\`);
+          claimsQuery = claimsQuery.or(\`primary_handler_id.eq.\${userProfile.id},supervising_manager_id.eq.\${userProfile.id}\`);
           console.log('👥 Team access - viewing team claims');
         } else {
           // Individual access only
@@ -600,7 +602,7 @@ export const UserProfileDisplay = ({ userProfile }: any) => {
   const category = getUserCategory(userProfile?.role || '');
   
   return {
-    displayName: \`\${userProfile?.title || ''} \${userProfile?.first_name || ''} \${userProfile?.surname || ''}\`.trim(),
+    displayName: `${userProfile?.title || ''} ${userProfile?.first_name || ''} ${userProfile?.surname || ''}`.trim(),
     roleDisplay: roleInfo.display,
     roleDescription: roleInfo.description,
     category: roleInfo.category,
@@ -617,7 +619,7 @@ export const UserProfileDisplay = ({ userProfile }: any) => {
 };
 
 // Updated minimal frontend for testing the new system
-export const testNewSystemUseEffect = \`
+export const testNewSystemUseEffect = `
 useEffect(() => {
   const fetchData = async () => {
     try {
@@ -637,11 +639,11 @@ useEffect(() => {
       // Get enhanced user profile
       const { data: userProfile, error: profileError } = await supabase
         .from('user_profiles')
-        .select(\\\`
+        .select(\`
           *,
           organisation:organisations(*),
           role_permissions!inner(permission)
-        \\\`)
+        \`)
         .eq('email', user.email)
         .single();
 
@@ -653,7 +655,7 @@ useEffect(() => {
       }
 
       console.log('✅ Enhanced profile loaded:', {
-        name: \\\`\\\${userProfile.first_name} \\\${userProfile.surname}\\\`,
+        name: \`\${userProfile.first_name} \${userProfile.surname}\`,
         role: userProfile.role,
         organisation: userProfile.organisation?.name,
         permissions: userProfile.role_permissions.length
@@ -665,7 +667,7 @@ useEffect(() => {
       // Get claims/projects with enhanced query
       const { data: claimsData, error: claimsError } = await supabase
         .from('projects')
-        .select(\\\`
+        .select(\`
           claim_reference,
           claim_title,
           claim_status,
@@ -676,7 +678,7 @@ useEffect(() => {
           property_address,
           organisation:organisations(name),
           primary_handler:user_profiles!primary_handler_id(first_name, surname)
-        \\\`)
+        \`)
         .order('created_at', { ascending: false })
         .limit(10);
 
@@ -698,4 +700,4 @@ useEffect(() => {
 
   fetchData();
 }, []);
-\`;
+`;

@@ -653,7 +653,7 @@ export default function CreateThreadModal({
                       <SelectValue placeholder="Never archive automatically" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Never</SelectItem>
+                      <SelectItem value="never">Never</SelectItem>
                       <SelectItem value="7d">After 7 days of inactivity</SelectItem>
                       <SelectItem value="30d">After 30 days of inactivity</SelectItem>
                       <SelectItem value="90d">After 90 days of inactivity</SelectItem>

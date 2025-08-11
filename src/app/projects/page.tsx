@@ -1,1337 +1,668 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabaseClient'
-
-import {
-  Table, TableHeader, TableRow, TableHead,
-  TableBody, TableCell
-} from '@/components/ui/table'
-
-import { Input } from '@/components/ui/input'
-import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem
-} from '@/components/ui/select'
-
-import {
-  Dialog, DialogTrigger, DialogContent, DialogHeader,
-  DialogTitle, DialogFooter, DialogDescription
-} from '@/components/ui/dialog'
-
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, 
-  DropdownMenuTrigger, DropdownMenuSeparator
-} from '@/components/ui/dropdown-menu'
-
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { useUser } from '@/hooks/useUser'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-
-import { 
-  Search, Filter, Plus, MoreHorizontal, Eye, Edit, Trash2,
-  FolderOpen, Calendar, MapPin, Activity, TrendingUp, AlertCircle,
-  Download, FileText, Building, Hammer, Users, Clock,
-  CheckSquare, Archive, Copy, Mail, PoundSterling,
-  Settings, BarChart3, Target, AlertTriangle, Building2,
-  HardHat, Home, Calendar as CalendarIcon, ChevronDown,
-  Shield, Crown
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Building2,
+  Search,
+  Filter,
+  Plus,
+  Eye,
+  Calendar,
+  User,
+  MapPin,
+  Shield,
+  Flag,
+  Clock,
+  FileText,
+  Download,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  CheckCircle,
+  PoundSterling
 } from 'lucide-react'
+import { format, formatDistanceToNow } from 'date-fns'
+import { cn } from '@/lib/utils'
+import type { Project, ProjectStatus, UserProfile } from '@/types/database'
 
-interface Project {
-  id: string
-  name: string
-  description: string
-  region: string
-  status: string
-  project_type: string
-  contract_value?: number
-  client_name?: string
-  client_contact?: string
-  start_date?: string
-  target_completion?: string
-  created_at: string
-  updated_at?: string
-  postcode?: string
-  site_address?: string
-  contractor?: string
-  template_used?: string
+// Enhanced project interface with relations
+interface EnhancedProject extends Project {
+  project_financials?: {
+    budget_total?: number
+    budget_spent?: number
+    budget_remaining?: number
+  }[]
+  tasks_aggregate?: {
+    count: number
+  }
+  documents_aggregate?: {
+    count: number
+  }
+  project_members?: {
+    user_profiles: Pick<UserProfile, 'first_name' | 'surname' | 'role'>
+  }[]
 }
 
-interface ProjectTemplate {
-  id: string
-  name: string
-  description: string
-  project_type: string
-  default_status: string
-  checklist_items: string[]
-  estimated_duration_weeks: number
-  typical_contract_value_range: string
+interface ProjectFilters {
+  search: string
+  status: string[]
+  onHold: boolean | null
+  vulnerabilityFlags: boolean | null
+  dateRange: {
+    from?: Date
+    to?: Date
+  }
+  budgetRange: {
+    min?: number
+    max?: number
+  }
 }
 
-// UK Building Industry Project Templates
-const PROJECT_TEMPLATES: ProjectTemplate[] = [
-  {
-    id: 'residential-extension',
-    name: 'Residential Extension',
-    description: 'Single/double storey home extensions, conservatories, and loft conversions',
-    project_type: 'Residential Extension',
-    default_status: 'Planning',
-    checklist_items: [
-      'Planning permission check',
-      'Building regulations application',
-      'Party wall agreements (if applicable)',
-      'Structural engineer consultation',
-      'Architect drawings',
-      'Contractor selection',
-      'Materials procurement',
-      'Building control inspections'
-    ],
-    estimated_duration_weeks: 12,
-    typical_contract_value_range: '£20,000 - £80,000'
-  },
-  {
-    id: 'commercial-fit-out',
-    name: 'Commercial Fit-Out',
-    description: 'Office spaces, retail units, and commercial interior refurbishments',
-    project_type: 'Commercial Fit-Out',
-    default_status: 'Design',
-    checklist_items: [
-      'Space planning and design',
-      'Fire safety compliance',
-      'Accessibility compliance (DDA)',
-      'M&E design and installation',
-      'Data and telecoms infrastructure',
-      'Health & safety documentation',
-      'CDM compliance',
-      'Handover and snagging'
-    ],
-    estimated_duration_weeks: 8,
-    typical_contract_value_range: '£50,000 - £200,000'
-  },
-  {
-    id: 'new-build-residential',
-    name: 'New Build Residential',
-    description: 'New construction of residential properties including houses and apartments',
-    project_type: 'New Build',
-    default_status: 'Planning',
-    checklist_items: [
-      'Land acquisition',
-      'Planning permission',
-      'Building regulations approval',
-      'Site surveys and investigations',
-      'Foundation design',
-      'Structural design',
-      'M&E design',
-      'NHBC/warranty arrangements',
-      'CIL and S106 agreements',
-      'Final inspections and certification'
-    ],
-    estimated_duration_weeks: 26,
-    typical_contract_value_range: '£150,000 - £500,000'
-  },
-  {
-    id: 'renovation-refurb',
-    name: 'Property Renovation',
-    description: 'Full property renovations, modernization, and restoration projects',
-    project_type: 'Renovation',
-    default_status: 'Survey',
-    checklist_items: [
-      'Building survey',
-      'Asbestos survey (pre-1980 buildings)',
-      'Listed building consent (if applicable)',
-      'Structural assessment',
-      'Mechanical & electrical upgrade',
-      'Insulation and energy efficiency',
-      'Kitchen and bathroom installation',
-      'Decorating and finishing'
-    ],
-    estimated_duration_weeks: 16,
-    typical_contract_value_range: '£30,000 - £150,000'
-  },
-  {
-    id: 'insurance-claim',
-    name: 'Insurance Claim Project',
-    description: 'Property repairs and restoration following insurance claims (fire, flood, subsidence)',
-    project_type: 'Insurance Repair',
-    default_status: 'Assessment',
-    checklist_items: [
-      'Initial damage assessment',
-      'Insurance adjuster liaison',
-      'Scope of works agreement',
-      'Emergency make-safe works',
-      'Specialist contractor appointment',
-      'Materials matching and sourcing',
-      'Progress monitoring',
-      'Final account settlement'
-    ],
-    estimated_duration_weeks: 10,
-    typical_contract_value_range: '£10,000 - £100,000'
-  },
-  {
-    id: 'maintenance-contract',
-    name: 'Maintenance Contract',
-    description: 'Ongoing property maintenance, planned maintenance programmes, and reactive repairs',
-    project_type: 'Maintenance',
-    default_status: 'Active',
-    checklist_items: [
-      'Property condition survey',
-      'Maintenance schedule creation',
-      'Contractor framework agreement',
-      'Emergency contact procedures',
-      'Regular inspection regime',
-      'Compliance monitoring',
-      'Performance reporting',
-      'Annual contract review'
-    ],
-    estimated_duration_weeks: 52,
-    typical_contract_value_range: '£5,000 - £50,000'
-  }
+const PROJECT_STATUSES: { value: ProjectStatus; label: string; color: string }[] = [
+  { value: 'planning', label: 'Planning', color: 'bg-purple-500' },
+  { value: 'survey_booked', label: 'Survey Booked', color: 'bg-orange-500' },
+  { value: 'survey_complete', label: 'Survey Complete', color: 'bg-orange-600' },
+  { value: 'awaiting_agreement', label: 'Awaiting Agreement', color: 'bg-amber-500' },
+  { value: 'planning_authorisation', label: 'Planning Auth', color: 'bg-yellow-500' },
+  { value: 'scheduling_works', label: 'Scheduling Works', color: 'bg-cyan-500' },
+  { value: 'works_in_progress', label: 'Works in Progress', color: 'bg-blue-500' },
+  { value: 'works_complete', label: 'Works Complete', color: 'bg-green-500' },
+  { value: 'snagging', label: 'Snagging', color: 'bg-pink-500' },
+  { value: 'final_accounts', label: 'Final Accounts', color: 'bg-indigo-500' },
+  { value: 'closed', label: 'Closed', color: 'bg-green-600' },
+  { value: 'on_hold', label: 'On Hold', color: 'bg-yellow-600' }
 ]
 
-const UK_REGIONS = [
-  'London', 'South East', 'South West', 'East of England', 'East Midlands',
-  'West Midlands', 'Yorkshire and the Humber', 'North West', 'North East',
-  'Scotland', 'Wales', 'Northern Ireland'
-]
-
-const PROJECT_STATUSES = [
-  'Planning', 'Design', 'Tender', 'Pre-Construction', 'In Progress', 
-  'Practical Completion', 'Snagging', 'Final Account', 'Complete',
-  'On Hold', 'Cancelled', 'Assessment', 'Survey', 'Active'
-]
-
-export default function ProjectsPage() {
-  const router = useRouter()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [currentUser, setCurrentUser] = useState<any>(null)
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
-
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [regionFilter, setRegionFilter] = useState('all')
-  const [typeFilter, setTypeFilter] = useState('all')
-  const [sortBy, setSortBy] = useState('created_at')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-
-  const [selectedProjects, setSelectedProjects] = useState<string[]>([])
-  const [bulkActionOpen, setBulkActionOpen] = useState(false)
-
-  const [newProject, setNewProject] = useState({ 
-    name: '', 
-    description: '', 
-    region: '', 
-    status: 'Planning',
-    project_type: '',
-    contract_value: '',
-    client_name: '',
-    client_contact: '',
-    start_date: '',
-    target_completion: '',
-    postcode: '',
-    site_address: '',
-    contractor: '',
-    template_used: ''
-  })
-  const [creating, setCreating] = useState(false)
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [selectedTemplate, setSelectedTemplate] = useState<ProjectTemplate | null>(null)
-  const [showTemplateDialog, setShowTemplateDialog] = useState(false)
-
-// Replace your useEffect with this simplified version (after disabling RLS):
-
-useEffect(() => {
-  const fetchProjects = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      console.log('🔍 Starting project fetch...')
-
-      // Check authentication
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
-      
-      if (authError || !user) {
-        console.error('❌ Authentication error:', authError)
-        setError('Please log in to view projects')
-        setLoading(false)
-        return
-      }
-
-      console.log('👤 Authenticated user:', user.email, 'ID:', user.id)
-
-      // Get user profile by email (RLS is now disabled)
-      console.log('🔍 Fetching user profile by email...')
-      const { data: userProfile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('id, email, full_name, role, super_admin')
-        .eq('email', user.email)
-        .single()
-
-      console.log('👤 Profile result:', { userProfile, profileError })
-
-      if (profileError || !userProfile) {
-        console.error('❌ Profile not found:', profileError)
-        setError(`Profile not found for ${user.email}. Please contact administrator.`)
-        setLoading(false)
-        return
-      }
-
-      console.log('✅ Profile found:', {
-        email: userProfile.email,
-        role: userProfile.role,
-        super_admin: userProfile.super_admin
-      })
-
-      setCurrentUser(userProfile)
-      const isAdmin = userProfile.super_admin || userProfile.role === 'super_admin'
-      setIsSuperAdmin(isAdmin)
-
-      console.log('🔧 Access level:', { isAdmin })
-
-      // Fetch all projects (you're super admin)
-      console.log('🌟 Fetching all projects...')
-      const { data: projectsData, error: projectsError } = await supabase
-        .from('projects')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      console.log('📊 Projects result:', { 
-        count: projectsData?.length || 0, 
-        error: projectsError 
-      })
-
-      if (projectsError) {
-        console.error('❌ Error fetching projects:', projectsError)
-        setError('Failed to load projects: ' + projectsError.message)
-      } else {
-        console.log('✅ Projects loaded successfully')
-        setProjects(projectsData || [])
-      }
-
-    } catch (error: any) {
-      console.error('💥 Unexpected error:', error)
-      setError('An unexpected error occurred: ' + error.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  fetchProjects()
-}, [])
-
-  const filteredAndSortedProjects = useMemo(() => {
-    let filtered = projects.filter((project) => {
-      const matchesSearch = project.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           project.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           project.client_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           project.site_address?.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter !== 'all' ? project.status === statusFilter : true
-      const matchesRegion = regionFilter !== 'all' ? project.region === regionFilter : true
-      const matchesType = typeFilter !== 'all' ? project.project_type === typeFilter : true
-      return matchesSearch && matchesStatus && matchesRegion && matchesType
-    })
-
-    filtered.sort((a, b) => {
-      let aValue = a[sortBy as keyof Project]
-      let bValue = b[sortBy as keyof Project]
-      
-      if (sortBy === 'created_at' || sortBy === 'start_date' || sortBy === 'target_completion') {
-        aValue = new Date(aValue as string).getTime()
-        bValue = new Date(bValue as string).getTime()
-      }
-      
-      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1
-      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1
-      return 0
-    })
-
-    return filtered
-  }, [projects, searchTerm, statusFilter, regionFilter, typeFilter, sortBy, sortOrder])
-
-  const handleCreateFromTemplate = (template: ProjectTemplate) => {
-    setSelectedTemplate(template)
-    setNewProject({
-      ...newProject,
-      project_type: template.project_type,
-      status: template.default_status,
-      template_used: template.id
-    })
-    setShowTemplateDialog(false)
-    setIsDialogOpen(true)
-  }
-
-  const handleCreate = async () => {
-    if (!newProject.name.trim()) return
-    
-    setCreating(true)
-    const projectData = {
-      ...newProject,
-      contract_value: newProject.contract_value ? parseFloat(newProject.contract_value) : null
-    }
-    
-    const { data, error } = await supabase
-      .from('projects')
-      .insert([projectData])
-      .select()
-      .single()
-
-    if (!error && data) {
-      setProjects(prev => [data, ...prev])
-      setNewProject({ 
-        name: '', description: '', region: '', status: 'Planning',
-        project_type: '', contract_value: '', client_name: '', client_contact: '',
-        start_date: '', target_completion: '', postcode: '', site_address: '',
-        contractor: '', template_used: ''
-      })
-      setSelectedTemplate(null)
-      setIsDialogOpen(false)
-    }
-    setCreating(false)
-  }
-
-  const handleBulkStatusUpdate = async (newStatus: string) => {
-    const { error } = await supabase
-      .from('projects')
-      .update({ status: newStatus })
-      .in('id', selectedProjects)
-
-    if (!error) {
-      setProjects(prev => 
-        prev.map(p => 
-          selectedProjects.includes(p.id) ? { ...p, status: newStatus } : p
-        )
+// Fetch projects with comprehensive data
+const fetchProjects = async (): Promise<EnhancedProject[]> => {
+  const { data, error } = await supabase
+    .from('projects')
+    .select(`
+      *,
+      project_financials (
+        budget_total,
+        budget_spent,
+        budget_remaining
       )
-      setSelectedProjects([])
-      setBulkActionOpen(false)
-    }
-  }
-
-  const handleBulkDelete = async () => {
-    if (!confirm(`Delete ${selectedProjects.length} selected projects? This cannot be undone.`)) {
-      return
-    }
-
-    const { error } = await supabase
-      .from('projects')
-      .delete()
-      .in('id', selectedProjects)
-
-    if (!error) {
-      setProjects(prev => prev.filter(p => !selectedProjects.includes(p.id)))
-      setSelectedProjects([])
-      setBulkActionOpen(false)
-    }
-  }
-
-  const exportToCSV = () => {
-    const headers = [
-      'Project Name', 'Type', 'Status', 'Region', 'Client', 'Contract Value', 
-      'Start Date', 'Target Completion', 'Site Address', 'Contractor', 'Created'
-    ]
-    
-    const csvData = filteredAndSortedProjects.map(project => [
-      project.name,
-      project.project_type || '',
-      project.status,
-      project.region || '',
-      project.client_name || '',
-      project.contract_value ? `£${project.contract_value.toLocaleString()}` : '',
-      project.start_date || '',
-      project.target_completion || '',
-      project.site_address || '',
-      project.contractor || '',
-      new Date(project.created_at).toLocaleDateString()
-    ])
-
-    const csvContent = [headers, ...csvData]
-      .map(row => row.map(field => `"${field}"`).join(','))
-      .join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `projects-export-${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
-    window.URL.revokeObjectURL(url)
-  }
-
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'In Progress': return 'bg-blue-100 text-blue-800 border-blue-200'
-      case 'On Hold': return 'bg-yellow-100 text-yellow-800 border-yellow-200'
-      case 'Complete': case 'Practical Completion': return 'bg-green-100 text-green-800 border-green-200'
-      case 'Cancelled': return 'bg-red-100 text-red-800 border-red-200'
-      case 'Planning': case 'Design': return 'bg-purple-100 text-purple-800 border-purple-200'
-      case 'Tender': case 'Pre-Construction': return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'Snagging': return 'bg-amber-100 text-amber-800 border-amber-200'
-      default: return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'In Progress': return <Activity className="w-3 h-3" />
-      case 'On Hold': return <AlertCircle className="w-3 h-3" />
-      case 'Complete': case 'Practical Completion': return <CheckSquare className="w-3 h-3" />
-      case 'Planning': case 'Design': return <Target className="w-3 h-3" />
-      case 'Cancelled': return <AlertTriangle className="w-3 h-3" />
-      default: return <Clock className="w-3 h-3" />
-    }
-  }
-
-  const stats = useMemo(() => {
-    const total = projects.length
-    const inProgress = projects.filter(p => p.status === 'In Progress').length
-    const completed = projects.filter(p => ['Complete', 'Practical Completion'].includes(p.status)).length
-    const planning = projects.filter(p => ['Planning', 'Design', 'Tender'].includes(p.status)).length
-    const totalValue = projects.reduce((sum, p) => sum + (p.contract_value || 0), 0)
-    
-    return { total, inProgress, completed, planning, totalValue }
-  }, [projects])
-
-  if (loading) {
-    return (
-      <div className="p-8">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <Building2 className="w-8 h-8 text-blue-600" />
-            <div>
-              <h1 className="text-3xl font-bold">Project Management</h1>
-              <p className="text-muted-foreground">Loading projects...</p>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          {[1, 2, 3, 4, 5].map(i => (
-            <Skeleton key={i} className="h-24" />
-          ))}
-        </div>
-        <div className="space-y-3">
-          {[1, 2, 3, 4, 5].map(i => (
-            <Skeleton key={i} className="h-16 w-full" />
-          ))}
-        </div>
-      </div>
-    )
-  }
+    `)
+    .order('updated_at', { ascending: false })
 
   if (error) {
-    return (
-      <div className="p-8">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <Building2 className="w-8 h-8 text-blue-600" />
-            <div>
-              <h1 className="text-3xl font-bold">Project Management</h1>
-              <p className="text-red-600">Error: {error}</p>
+    console.error('Error fetching projects:', error)
+    throw error
+  }
+  return data || []
+}
+
+// Create new project
+const createProject = async (projectData: {
+  name: string
+  description?: string
+  contact_name?: string
+  contact_phone?: string
+  contact_email?: string
+  contact_address?: string
+}) => {
+  const { data, error } = await supabase
+    .from('projects')
+    .insert([{
+      ...projectData,
+      status: 'planning',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }])
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+// Project creation dialog
+function CreateProjectDialog() {
+  const [open, setOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    contact_name: '',
+    contact_phone: '',
+    contact_email: '',
+    contact_address: ''
+  })
+  const [creating, setCreating] = useState(false)
+  const router = useRouter()
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!formData.name.trim()) return
+
+    setCreating(true)
+    try {
+      const project = await createProject(formData)
+      setOpen(false)
+      setFormData({
+        name: '',
+        description: '',
+        contact_name: '',
+        contact_phone: '',
+        contact_email: '',
+        contact_address: ''
+      })
+      router.push(`/projects/${project.id}`)
+    } catch (error) {
+      console.error('Error creating project:', error)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>
+          <Plus className="w-4 h-4 mr-2" />
+          New Project
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Create New Project</DialogTitle>
+          <DialogDescription>
+            Create a new project to track claims, manage tasks, and collaborate with your team.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Project Name*</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Enter project name"
+              required
+            />
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="Brief project description"
+              rows={2}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="contact_name">Contact Name</Label>
+              <Input
+                id="contact_name"
+                value={formData.contact_name}
+                onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
+                placeholder="Contact person"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="contact_phone">Contact Phone</Label>
+              <Input
+                id="contact_phone"
+                type="tel"
+                value={formData.contact_phone}
+                onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
+                placeholder="Phone number"
+              />
             </div>
           </div>
-        </div>
-        <Card className="p-6">
-          <CardContent>
-            <div className="text-center">
-              <AlertTriangle className="w-16 h-16 mx-auto text-red-500 mb-4" />
-              <h3 className="text-lg font-medium mb-2">Failed to Load Projects</h3>
-              <p className="text-muted-foreground mb-4">{error}</p>
-              <Button onClick={() => window.location.reload()}>
-                Try Again
-              </Button>
+
+          <div className="space-y-2">
+            <Label htmlFor="contact_email">Contact Email</Label>
+            <Input
+              id="contact_email"
+              type="email"
+              value={formData.contact_email}
+              onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
+              placeholder="email@example.com"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="contact_address">Property Address</Label>
+            <Textarea
+              id="contact_address"
+              value={formData.contact_address}
+              onChange={(e) => setFormData({ ...formData, contact_address: e.target.value })}
+              placeholder="Full property address"
+              rows={2}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={creating || !formData.name.trim()}>
+              {creating ? 'Creating...' : 'Create Project'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Project card component
+function ProjectCard({ project, onClick }: { project: EnhancedProject; onClick: () => void }) {
+  const statusConfig = PROJECT_STATUSES.find(s => s.value === project.status)
+  const totalBudget = project.project_financials?.[0]?.budget_total || 0
+  const budgetSpent = project.project_financials?.[0]?.budget_spent || 0
+  const tasksCount = 0 // Will be populated after database enhancement
+  const documentsCount = 0 // Will be populated after database enhancement
+  const teamSize = 0 // Will be populated after database enhancement
+
+  return (
+    <Card className="hover:shadow-md transition-all cursor-pointer" onClick={onClick}>
+      <CardContent className="p-6">
+        <div className="space-y-4">
+          {/* Header */}
+          <div className="flex items-start justify-between">
+            <div className="space-y-1 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-lg truncate">{project.name}</h3>
+                {project.on_hold && (
+                  <Badge variant="destructive" className="text-xs">
+                    <Flag className="w-3 h-3 mr-1" />
+                    ON HOLD
+                  </Badge>
+                )}
+                {project.vulnerability_flags && project.vulnerability_flags.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Shield className="w-3 h-3 mr-1" />
+                    Vulnerable
+                  </Badge>
+                )}
+              </div>
+              {project.description && (
+                <p className="text-sm text-muted-foreground line-clamp-2">{project.description}</p>
+              )}
             </div>
-          </CardContent>
-        </Card>
+            
+            <div className="flex items-center gap-2 ml-4">
+              <div className={cn("w-3 h-3 rounded-full", statusConfig?.color)} />
+              <Badge variant="outline" className="text-xs whitespace-nowrap">
+                {statusConfig?.label || project.status}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Contact & Location */}
+          {(project.contact_name || project.contact_address) && (
+            <div className="space-y-1">
+              {project.contact_name && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <User className="w-3 h-3" />
+                  <span>{project.contact_name}</span>
+                </div>
+              )}
+              {project.contact_address && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <MapPin className="w-3 h-3" />
+                  <span className="truncate">{project.contact_address}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Metrics */}
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Building2 className="w-3 h-3" />
+                <span>Team: {teamSize}</span>
+              </div>
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <CheckCircle className="w-3 h-3" />
+                <span>Tasks: {tasksCount}</span>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <FileText className="w-3 h-3" />
+                <span>Docs: {documentsCount}</span>
+              </div>
+              {totalBudget > 0 && (
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <PoundSterling className="w-3 h-3" />
+                  <span>Budget: £{(totalBudget / 1000).toFixed(0)}k</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-2 border-t">
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="w-3 h-3" />
+              <span>Updated {formatDistanceToNow(new Date(project.updated_at || project.created_at), { addSuffix: true })}</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Main projects page component
+export default function ProjectsPage() {
+  const { user } = useUser()
+  const router = useRouter()
+  const [filters, setFilters] = useState<ProjectFilters>({
+    search: '',
+    status: [],
+    onHold: null,
+    vulnerabilityFlags: null,
+    dateRange: {},
+    budgetRange: {}
+  })
+  const [showFilters, setShowFilters] = useState(false)
+
+  const { data: projects = [], isLoading, error, refetch } = useQuery({
+    queryKey: ['projects'],
+    queryFn: fetchProjects,
+    staleTime: 2 * 60 * 1000
+  })
+
+  // Filter projects
+  const filteredProjects = useMemo(() => {
+    return projects.filter(project => {
+      // Search filter
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase()
+        const searchableText = [
+          project.name,
+          project.description,
+          project.contact_name,
+          project.contact_address
+        ].filter(Boolean).join(' ').toLowerCase()
+        
+        if (!searchableText.includes(searchLower)) return false
+      }
+
+      // Status filter
+      if (filters.status.length > 0 && !filters.status.includes(project.status)) {
+        return false
+      }
+
+      // On hold filter
+      if (filters.onHold !== null && project.on_hold !== filters.onHold) {
+        return false
+      }
+
+      // Vulnerability flags filter
+      if (filters.vulnerabilityFlags !== null) {
+        const hasVulnerability = project.vulnerability_flags && project.vulnerability_flags.length > 0
+        if (hasVulnerability !== filters.vulnerabilityFlags) return false
+      }
+
+      return true
+    })
+  }, [projects, filters])
+
+  const projectStats = useMemo(() => {
+    const total = filteredProjects.length
+    const active = filteredProjects.filter(p => 
+      ['works_in_progress', 'survey_booked', 'survey_complete', 'scheduling_works'].includes(p.status)
+    ).length
+    const onHold = filteredProjects.filter(p => p.on_hold).length
+    const vulnerable = filteredProjects.filter(p => p.vulnerability_flags && p.vulnerability_flags.length > 0).length
+
+    return { total, active, onHold, vulnerable }
+  }, [filteredProjects])
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+        <div className="max-w-screen-2xl mx-auto space-y-6">
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-64" />
+            <div className="flex gap-4">
+              {[...Array(4)].map((_, i) => (
+                <Skeleton key={i} className="h-20 w-48" />
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {[...Array(9)].map((_, i) => (
+              <Skeleton key={i} className="h-64" />
+            ))}
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Building2 className="w-8 h-8 text-blue-600" />
-            Project Management
-            {isSuperAdmin && (
-              <Badge variant="secondary" className="ml-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white">
-                <Crown className="w-3 h-3 mr-1" />
-                Super Admin
-              </Badge>
-            )}
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {isSuperAdmin 
-              ? "Full system access - viewing all projects" 
-              : "Comprehensive project and claims management for the UK building industry"
-            }
-          </p>
-          {currentUser && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Logged in as: {currentUser.email}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="p-6 max-w-screen-2xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
+            <p className="text-muted-foreground">
+              Manage your construction projects and insurance claims
             </p>
-          )}
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={() => refetch()}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+            <CreateProjectDialog />
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={exportToCSV} className="flex items-center gap-2">
-            <Download className="w-4 h-4" />
-            Export
-          </Button>
 
-          {/* Template Dialog */}
-          <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="flex items-center gap-2">
-                <FileText className="w-4 h-4" />
-                Templates
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-[95vw] w-full max-h-[90vh] overflow-y-auto p-0">
-              <DialogHeader className="p-6 pb-4">
-                <DialogTitle className="text-2xl">Choose Project Template</DialogTitle>
-                <DialogDescription className="text-base mt-2">
-                  Select a template to quickly set up your project with industry-standard workflows and checklists
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="px-6 pb-6">
-                <div className="grid grid-cols-1 md:grid-cols-1 2xl:grid-cols-3 gap-8">
-                  {PROJECT_TEMPLATES.map((template) => (
-                    <Card key={template.id} className="h-full flex flex-col hover:shadow-lg transition-all duration-200 border-2 hover:border-blue-300">
-                      <CardHeader className="flex-shrink-0">
-                        <div className="space-y-3">
-                          <div>
-                            <CardTitle className="text-lg leading-tight">{template.name}</CardTitle>
-                            <Badge variant="outline" className="mt-2 text-xs px-2 py-1">
-                              {template.project_type}
-                            </Badge>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      
-                      <CardContent className="flex-1 flex flex-col justify-between space-y-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            {template.description}
-                          </p>
-                        </div>
-                        
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-3">
-                            <Clock className="w-4 h-4 text-blue-600" />
-                            <span className="text-sm font-medium">~{template.estimated_duration_weeks} weeks</span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <PoundSterling className="w-4 h-4 text-green-600" />
-                            <span className="text-sm font-medium">{template.typical_contract_value_range}</span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <CheckSquare className="w-4 h-4 text-purple-600" />
-                            <span className="text-sm font-medium">{template.checklist_items.length} checklist items</span>
-                          </div>
-                        </div>
-                        
-                        <Button
-                          onClick={() => handleCreateFromTemplate(template)}
-                          className="w-full mt-4"
-                          size="lg"
-                        >
-                          Use This Template
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))}
+        {/* Error Alert */}
+        {error && (
+          <Alert className="border-red-200 bg-red-50">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Failed to load projects. Please try refreshing the page.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Projects</p>
+                  <p className="text-2xl font-bold">{projectStats.total}</p>
                 </div>
-                
-                <div className="text-center mt-8 p-4 bg-muted/30 rounded-lg">
-                  <p className="text-sm text-muted-foreground">
-                    <strong>Templates include:</strong> Pre-configured checklists, typical project durations, estimated costs, and industry best practices for UK building projects
-                  </p>
-                </div>
+                <Building2 className="w-8 h-8 text-blue-600" />
               </div>
-            </DialogContent>
-          </Dialog>
+            </CardContent>
+          </Card>
 
-          {/* Create Project Dialog */}
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="flex items-center gap-2">
-                <Plus className="w-4 h-4" />
-                New Project
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {selectedTemplate ? `Create ${selectedTemplate.name}` : 'Create New Project'}
-                </DialogTitle>
-                {selectedTemplate && (
-                  <DialogDescription>
-                    Using template: {selectedTemplate.description}
-                  </DialogDescription>
-                )}
-              </DialogHeader>
-              <Tabs defaultValue="basic" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="basic">Basic Info</TabsTrigger>
-                  <TabsTrigger value="details">Project Details</TabsTrigger>
-                  <TabsTrigger value="contacts">Contacts & Dates</TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="basic" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Project Name *</Label>
-                    <Input
-                      id="name"
-                      value={newProject.name}
-                      onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                      placeholder="Enter project name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      value={newProject.description}
-                      onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                      placeholder="Brief project description"
-                      rows={3}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="project_type">Project Type</Label>
-                      <Select
-                        value={newProject.project_type}
-                        onValueChange={(val) => setNewProject({ ...newProject, project_type: val })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROJECT_TEMPLATES.map(template => (
-                            <SelectItem key={template.project_type} value={template.project_type}>
-                              {template.project_type}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="status">Initial Status</Label>
-                      <Select
-                        value={newProject.status}
-                        onValueChange={(val) => setNewProject({ ...newProject, status: val })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROJECT_STATUSES.map((status) => (
-                            <SelectItem key={status} value={status}>
-                              {status}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </TabsContent>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Active Projects</p>
+                  <p className="text-2xl font-bold">{projectStats.active}</p>
+                </div>
+                <CheckCircle className="w-8 h-8 text-green-600" />
+              </div>
+            </CardContent>
+          </Card>
 
-                <TabsContent value="details" className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="region">Region</Label>
-                      <Select
-                        value={newProject.region}
-                        onValueChange={(val) => setNewProject({ ...newProject, region: val })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select region" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {UK_REGIONS.map(region => (
-                            <SelectItem key={region} value={region}>
-                              {region}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="contract_value">Contract Value (£)</Label>
-                      <Input
-                        id="contract_value"
-                        type="number"
-                        value={newProject.contract_value}
-                        onChange={(e) => setNewProject({ ...newProject, contract_value: e.target.value })}
-                        placeholder="0"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="site_address">Site Address</Label>
-                    <Textarea
-                      id="site_address"
-                      value={newProject.site_address}
-                      onChange={(e) => setNewProject({ ...newProject, site_address: e.target.value })}
-                      placeholder="Full site address"
-                      rows={2}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="postcode">Postcode</Label>
-                      <Input
-                        id="postcode"
-                        value={newProject.postcode}
-                        onChange={(e) => setNewProject({ ...newProject, postcode: e.target.value })}
-                        placeholder="SW1A 1AA"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="contractor">Main Contractor</Label>
-                      <Input
-                        id="contractor"
-                        value={newProject.contractor}
-                        onChange={(e) => setNewProject({ ...newProject, contractor: e.target.value })}
-                        placeholder="Contractor name"
-                      />
-                    </div>
-                  </div>
-                </TabsContent>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">On Hold</p>
+                  <p className="text-2xl font-bold">{projectStats.onHold}</p>
+                </div>
+                <Flag className="w-8 h-8 text-yellow-600" />
+              </div>
+            </CardContent>
+          </Card>
 
-                <TabsContent value="contacts" className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="client_name">Client Name</Label>
-                      <Input
-                        id="client_name"
-                        value={newProject.client_name}
-                        onChange={(e) => setNewProject({ ...newProject, client_name: e.target.value })}
-                        placeholder="Client/Company name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="client_contact">Client Contact</Label>
-                      <Input
-                        id="client_contact"
-                        value={newProject.client_contact}
-                        onChange={(e) => setNewProject({ ...newProject, client_contact: e.target.value })}
-                        placeholder="Email or phone"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="start_date">Start Date</Label>
-                      <Input
-                        id="start_date"
-                        type="date"
-                        value={newProject.start_date}
-                        onChange={(e) => setNewProject({ ...newProject, start_date: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="target_completion">Target Completion</Label>
-                      <Input
-                        id="target_completion"
-                        type="date"
-                        value={newProject.target_completion}
-                        onChange={(e) => setNewProject({ ...newProject, target_completion: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                </TabsContent>
-              </Tabs>
-
-              <DialogFooter>
-                <Button 
-                  variant="outline" 
-                  onClick={() => {
-                    setIsDialogOpen(false)
-                    setSelectedTemplate(null)
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleCreate} 
-                  disabled={creating || !newProject.name.trim()}
-                >
-                  {creating ? 'Creating...' : 'Create Project'}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Vulnerable Customers</p>
+                  <p className="text-2xl font-bold">{projectStats.vulnerable}</p>
+                </div>
+                <Shield className="w-8 h-8 text-red-600" />
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </div>
 
-      {/* Project Count Info */}
-      <div className="mb-4">
-        <p className="text-sm text-muted-foreground">
-          {projects.length === 0 
-            ? (isSuperAdmin ? "No projects exist in the system" : "You don't have access to any projects yet")
-            : `Showing ${projects.length} project${projects.length !== 1 ? 's' : ''}`
-          }
-          {isSuperAdmin && projects.length > 0 && (
-            <span className="ml-2 text-purple-600 font-medium">
-              • System-wide view
-            </span>
-          )}
-        </p>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        {/* Search and Filters */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Planning Stage</CardTitle>
-            <Target className="h-4 w-4 text-purple-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{stats.planning}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">In Progress</CardTitle>
-            <Activity className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.inProgress}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <CheckSquare className="h-4 w-4 text-green-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Projects</CardTitle>
-            <Building2 className="h-4 w-4 text-gray-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-600">{stats.total}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Value</CardTitle>
-            <PoundSterling className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-emerald-600">
-              £{stats.totalValue.toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Empty state */}
-      {projects.length === 0 && (
-        <Card className="p-12">
-          <CardContent>
-            <div className="text-center">
-              <FolderOpen className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">No projects found</h3>
-              <p className="text-muted-foreground mb-4">
-                {isSuperAdmin 
-                  ? "No projects have been created in the system yet."
-                  : "You haven't been added to any projects yet. Contact your administrator to get access."
-                }
-              </p>
-              {(isSuperAdmin || true) && (
-                <Button onClick={() => setIsDialogOpen(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  {isSuperAdmin ? "Create First Project" : "Request Project Access"}
+          <CardContent className="p-6">
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search projects, contacts, or addresses..."
+                    value={filters.search}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                    className="pl-10"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="flex items-center gap-2"
+                >
+                  <Filter className="w-4 h-4" />
+                  Filters
+                  {showFilters ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                 </Button>
+              </div>
+
+              {showFilters && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <Label>Status</Label>
+                    <Select
+                      value={filters.status.length > 0 ? filters.status[0] : 'all'}
+                      onValueChange={(value) => 
+                        setFilters({ ...filters, status: value === 'all' ? [] : [value] })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {PROJECT_STATUSES.map(status => (
+                          <SelectItem key={status.value} value={status.value}>
+                            <div className="flex items-center gap-2">
+                              <div className={cn("w-2 h-2 rounded-full", status.color)} />
+                              {status.label}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="onHold"
+                      checked={filters.onHold === true}
+                      onCheckedChange={(checked) => 
+                        setFilters({ ...filters, onHold: checked ? true : null })
+                      }
+                    />
+                    <Label htmlFor="onHold">Show only projects on hold</Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="vulnerable"
+                      checked={filters.vulnerabilityFlags === true}
+                      onCheckedChange={(checked) => 
+                        setFilters({ ...filters, vulnerabilityFlags: checked ? true : null })
+                      }
+                    />
+                    <Label htmlFor="vulnerable">Show only vulnerable customers</Label>
+                  </div>
+                </div>
               )}
             </div>
           </CardContent>
         </Card>
-      )}
 
-      {/* Show content only if there are projects */}
-      {projects.length > 0 && (
-        <>
-          {/* Bulk Actions */}
-          {selectedProjects.length > 0 && (
-            <Card className="mb-6 border-blue-200 bg-blue-50">
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-4">
-                  <span className="font-medium">
-                    {selectedProjects.length} project{selectedProjects.length !== 1 ? 's' : ''} selected
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedProjects([])}
-                  >
-                    Clear Selection
-                  </Button>
-                </div>
-                <DropdownMenu open={bulkActionOpen} onOpenChange={setBulkActionOpen}>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="flex items-center gap-2">
-                      <Settings className="w-4 h-4" />
-                      Bulk Actions
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem className="font-medium">
-                      Update Status
-                    </DropdownMenuItem>
-                    {PROJECT_STATUSES.map(status => (
-                      <DropdownMenuItem
-                        key={status}
-                        onClick={() => handleBulkStatusUpdate(status)}
-                        className="pl-6"
-                      >
-                        {status}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={handleBulkDelete}
-                      className="text-red-600"
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete Selected
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Filters and Search */}
-          <Card className="mb-6">
-            <CardContent className="pt-6">
-              <div className="flex flex-col lg:flex-row gap-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-                  <Input
-                    placeholder="Search projects, clients, addresses..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                
-                <Select onValueChange={setStatusFilter} value={statusFilter}>
-                  <SelectTrigger className="w-full lg:w-48">
-                    <Activity className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    {PROJECT_STATUSES.map((status) => (
-                      <SelectItem key={status} value={status}>
-                        {status}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select onValueChange={setTypeFilter} value={typeFilter}>
-                  <SelectTrigger className="w-full lg:w-48">
-                    <Building className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Filter by type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    {PROJECT_TEMPLATES.map(template => (
-                      <SelectItem key={template.project_type} value={template.project_type}>
-                        {template.project_type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select onValueChange={setRegionFilter} value={regionFilter}>
-                  <SelectTrigger className="w-full lg:w-48">
-                    <MapPin className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Filter by region" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Regions</SelectItem>
-                    {UK_REGIONS.map((region) => (
-                      <SelectItem key={region} value={region}>
-                        {region}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select onValueChange={setSortBy} value={sortBy}>
-                  <SelectTrigger className="w-full lg:w-48">
-                    <BarChart3 className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="Sort by" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="created_at">Created Date</SelectItem>
-                    <SelectItem value="name">Project Name</SelectItem>
-                    <SelectItem value="status">Status</SelectItem>
-                    <SelectItem value="start_date">Start Date</SelectItem>
-                    <SelectItem value="contract_value">Contract Value</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Projects Table */}
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={selectedProjects.length === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedProjects(filteredAndSortedProjects.map(p => p.id))
-                          } else {
-                            setSelectedProjects([])
-                          }
-                        }}
-                      />
-                    </TableHead>
-                    <TableHead className="font-semibold">Project Details</TableHead>
-                    <TableHead className="font-semibold">Type & Status</TableHead>
-                    <TableHead className="font-semibold">Client & Location</TableHead>
-                    <TableHead className="font-semibold">Timeline & Value</TableHead>
-                    <TableHead className="w-16"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAndSortedProjects.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-12">
-                        <div className="flex flex-col items-center gap-2">
-                          <Building2 className="w-12 h-12 text-muted-foreground" />
-                          <p className="text-muted-foreground font-medium">No projects found</p>
-                          <p className="text-sm text-muted-foreground">
-                            Try adjusting your search or filter criteria
-                          </p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filteredAndSortedProjects.map((project) => (
-                    <TableRow
-                      key={project.id}
-                      className="hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => router.push(`/projects/${project.id}`)}
-                    >
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={selectedProjects.includes(project.id)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedProjects([...selectedProjects, project.id])
-                            } else {
-                              setSelectedProjects(selectedProjects.filter(id => id !== project.id))
-                            }
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <div className="font-medium flex items-center gap-2">
-                            {project.name}
-                            {project.template_used && (
-                              <Badge variant="secondary" className="text-xs">
-                                Template
-                              </Badge>
-                            )}
-                          </div>
-                          {project.description && (
-                            <div className="text-sm text-muted-foreground line-clamp-1 max-w-md mt-1">
-                              {project.description}
-                            </div>
-                          )}
-                          {project.contractor && (
-                            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                              <HardHat className="w-3 h-3" />
-                              {project.contractor}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-2">
-                          {project.project_type && (
-                            <Badge variant="outline" className="text-xs">
-                              {project.project_type}
-                            </Badge>
-                          )}
-                          <Badge 
-                            variant="outline"
-                            className={`${statusColor(project.status)} flex items-center gap-1 w-fit text-xs`}
-                          >
-                            {getStatusIcon(project.status)}
-                            {project.status}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          {project.client_name && (
-                            <div className="text-sm font-medium">{project.client_name}</div>
-                          )}
-                          {project.site_address && (
-                            <div className="text-xs text-muted-foreground flex items-start gap-1">
-                              <Home className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                              <span className="line-clamp-2">{project.site_address}</span>
-                            </div>
-                          )}
-                          {project.region && (
-                            <div className="text-xs text-muted-foreground flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {project.region}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1 text-xs">
-                          {project.start_date && (
-                            <div className="flex items-center gap-1">
-                              <CalendarIcon className="w-3 h-3 text-green-600" />
-                              <span>Start: {new Date(project.start_date).toLocaleDateString('en-GB')}</span>
-                            </div>
-                          )}
-                          {project.target_completion && (
-                            <div className="flex items-center gap-1">
-                              <CalendarIcon className="w-3 h-3 text-orange-600" />
-                              <span>End: {new Date(project.target_completion).toLocaleDateString('en-GB')}</span>
-                            </div>
-                          )}
-                          {project.contract_value && (
-                            <div className="flex items-center gap-1 font-medium text-emerald-700">
-                              <PoundSterling className="w-3 h-3" />
-                              <span>£{project.contract_value.toLocaleString()}</span>
-                            </div>
-                          )}
-                          <div className="text-muted-foreground">
-                            Created: {new Date(project.created_at).toLocaleDateString('en-GB')}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm">
-                              <MoreHorizontal className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                router.push(`/projects/${project.id}`)
-                              }}
-                            >
-                              <Eye className="w-4 h-4 mr-2" />
-                              View Project
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                router.push(`/projects/${project.id}/edit`)
-                              }}
-                            >
-                              <Edit className="w-4 h-4 mr-2" />
-                              Edit Details
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                router.push(`/projects/${project.id}/claims`)
-                              }}
-                            >
-                              <FileText className="w-4 h-4 mr-2" />
-                              Manage Claims
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                router.push(`/projects/${project.id}/documents`)
-                              }}
-                            >
-                              <Archive className="w-4 h-4 mr-2" />
-                              Documents
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // Duplicate project logic would go here
-                              }}
-                            >
-                              <Copy className="w-4 h-4 mr-2" />
-                              Duplicate
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                if (project.client_contact?.includes('@')) {
-                                  window.location.href = `mailto:${project.client_contact}`
-                                }
-                              }}
-                              disabled={!project.client_contact?.includes('@')}
-                            >
-                              <Mail className="w-4 h-4 mr-2" />
-                              Email Client
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // Delete functionality would go here
-                              }}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="w-4 h-4 mr-2" />
-                              Delete Project
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          {/* Results summary */}
-          <div className="mt-4 text-sm text-muted-foreground text-center">
-            Showing {filteredAndSortedProjects.length} of {projects.length} projects
-            {stats.totalValue > 0 && (
-              <span className="ml-4">
-                • Total value: £{stats.totalValue.toLocaleString()}
-              </span>
-            )}
+        {/* Projects Grid */}
+        {filteredProjects.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {filteredProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onClick={() => router.push(`/projects/${project.id}`)}
+              />
+            ))}
           </div>
-        </>
-      )}
+        ) : (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Building2 className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium mb-2">No projects found</h3>
+              <p className="text-muted-foreground mb-6">
+                {filters.search || filters.status.length > 0 || filters.onHold || filters.vulnerabilityFlags
+                  ? "No projects match your current filters."
+                  : "Get started by creating your first project."
+                }
+              </p>
+              {filters.search || filters.status.length > 0 || filters.onHold || filters.vulnerabilityFlags ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setFilters({
+                    search: '',
+                    status: [],
+                    onHold: null,
+                    vulnerabilityFlags: null,
+                    dateRange: {},
+                    budgetRange: {}
+                  })}
+                >
+                  Clear Filters
+                </Button>
+              ) : (
+                <CreateProjectDialog />
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   )
 }

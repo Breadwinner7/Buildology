@@ -22,7 +22,17 @@ export function useUser() {
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
-        .select('*')
+        .select(`
+          id, email, title, first_name, surname, preferred_name, job_title, role,
+          mobile_phone, office_phone, emergency_contact_name, emergency_contact_phone,
+          address_line_1, address_line_2, city, county, postcode, country,
+          professional_qualifications, professional_certifications, professional_memberships,
+          fca_reference, vat_number, company_registration, regions_covered, specialisms,
+          maximum_claim_value, travel_radius_miles, available_weekdays, available_weekends,
+          available_evenings, available_emergency, timezone, preferred_language,
+          can_authorise_payments, is_active, last_login, created_at, updated_at,
+          organisation_id, date_of_birth, ni_number, max_authorisation_limit
+        `)
         .eq('id', authUser.id)
         .single()
 
