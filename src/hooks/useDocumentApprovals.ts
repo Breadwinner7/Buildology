@@ -321,6 +321,29 @@ const rejectDocument = async (documentId: string, reason: string): Promise<void>
   if (error) throw error
 }
 
+const reviewDocument = async (documentId: string, comments?: string): Promise<void> => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('User not authenticated')
+
+  const updates: any = {
+    review_status: 'reviewed',
+    reviewed_by: user.id,
+    reviewed_at: new Date().toISOString(),
+    workflow_stage: 'reviewed'
+  }
+
+  if (comments) {
+    updates.review_comments = comments
+  }
+
+  const { error } = await supabase
+    .from('documents')
+    .update(updates)
+    .eq('id', documentId)
+
+  if (error) throw error
+}
+
 const escalateRequest = async (requestId: string, reason: string): Promise<void> => {
   const { error } = await supabase
     .from('approval_requests')
@@ -358,6 +381,35 @@ const fetchApprovalUsers = async (): Promise<Pick<UserProfile, 'id' | 'first_nam
 }
 
 // Helper functions
+export const requiresApproval = (documentType: string): boolean => {
+  const approvalRequiredTypes = [
+    'Contract',
+    'Invoice', 
+    'Quote',
+    'Policy Document',
+    'Claims Document',
+    'Insurance Document',
+    'Certificate'
+  ]
+  return approvalRequiredTypes.includes(documentType)
+}
+
+export const requiresReview = (documentType: string): boolean => {
+  const reviewTypes = [
+    'Photos - Before',
+    'Photos - During', 
+    'Photos - After',
+    'Photos - Damage',
+    'Report',
+    'Technical Drawing',
+    'Specification',
+    'Correspondence',
+    'Schedule',
+    'Other'
+  ]
+  return reviewTypes.includes(documentType)
+}
+
 export const getRequiredApprovalLevel = (documentType: string): string => {
   switch (documentType) {
     case 'Contract':
@@ -367,9 +419,9 @@ export const getRequiredApprovalLevel = (documentType: string): string => {
       return 'finance'
     case 'Policy Document':
     case 'Claims Document':
+    case 'Insurance Document':
       return 'director'
     case 'Certificate':
-    case 'Technical Drawing':
       return 'specialist'
     default:
       return 'standard'
@@ -379,10 +431,19 @@ export const getRequiredApprovalLevel = (documentType: string): string => {
 export const getApprovalStatusColor = (status: string) => {
   switch (status) {
     case 'approved': return 'bg-green-500'
+    case 'available': return 'bg-blue-500'  // For review-only docs
     case 'rejected': return 'bg-red-500'
-    case 'pending': return 'bg-yellow-500'
-    case 'escalated': return 'bg-orange-500'
+    case 'pending': return 'bg-orange-500'
+    case 'escalated': return 'bg-purple-500'
     case 'expired': return 'bg-gray-500'
+    default: return 'bg-gray-500'
+  }
+}
+
+export const getReviewStatusColor = (status: string) => {
+  switch (status) {
+    case 'reviewed': return 'bg-green-500'
+    case 'unreviewed': return 'bg-yellow-500'
     default: return 'bg-gray-500'
   }
 }
@@ -390,10 +451,19 @@ export const getApprovalStatusColor = (status: string) => {
 export const getApprovalStatusLabel = (status: string) => {
   switch (status) {
     case 'approved': return 'Approved'
-    case 'rejected': return 'Rejected'
-    case 'pending': return 'Pending Review'
+    case 'available': return 'Available'
+    case 'rejected': return 'Rejected' 
+    case 'pending': return 'Needs Approval'
     case 'escalated': return 'Escalated'
     case 'expired': return 'Expired'
+    default: return 'Unknown'
+  }
+}
+
+export const getReviewStatusLabel = (status: string) => {
+  switch (status) {
+    case 'reviewed': return 'Reviewed'
+    case 'unreviewed': return 'Review'
     default: return 'Unknown'
   }
 }
@@ -518,12 +588,22 @@ export function useApprovalMutations() {
     }
   })
 
+  const reviewDocumentMutation = useMutation({
+    mutationFn: ({ documentId, comments }: { documentId: string, comments?: string }) => 
+      reviewDocument(documentId, comments),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['document-approvals'] })
+      queryClient.invalidateQueries({ queryKey: ['documents'] })
+    }
+  })
+
   return {
     createRequest: createRequestMutation,
     approve: approveMutation,
     reject: rejectMutation,
     escalate: escalateMutation,
     approveDocument: approveDocumentMutation,
-    rejectDocument: rejectDocumentMutation
+    rejectDocument: rejectDocumentMutation,
+    reviewDocument: reviewDocumentMutation
   }
 }

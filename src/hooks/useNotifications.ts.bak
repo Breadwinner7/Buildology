@@ -1,0 +1,114 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useUser } from './useUser'
+import type { NotificationData } from '@/lib/notifications/NotificationSystem'
+
+export function useNotifications() {
+  const { user } = useUser()
+  const queryClient = useQueryClient()
+  const [isInitialized, setIsInitialized] = useState(false)
+  const [notificationSystem, setNotificationSystem] = useState<any>(null)
+
+  // Initialize notification system on client side only
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !notificationSystem) {
+      import('@/lib/notifications/NotificationSystem').then(({ notificationSystem: ns }) => {
+        setNotificationSystem(ns)
+      })
+    }
+  }, [notificationSystem])
+
+  useEffect(() => {
+    if (user?.id && !isInitialized && notificationSystem) {
+      notificationSystem.initialize(user.id)
+      setIsInitialized(true)
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (isInitialized && notificationSystem) {
+        notificationSystem.cleanup()
+      }
+    }
+  }, [user?.id, isInitialized, notificationSystem])
+
+  // Fetch notifications
+  const notificationsQuery = useQuery({
+    queryKey: ['notifications', user?.id],
+    queryFn: () => user?.id && notificationSystem ? notificationSystem.getNotifications(user.id) : [],
+    enabled: !!user?.id && !!notificationSystem,
+    refetchInterval: 30 * 1000, // Refetch every 30 seconds
+    staleTime: 10 * 1000 // Consider stale after 10 seconds
+  })
+
+  // Get unread count
+  const unreadCountQuery = useQuery({
+    queryKey: ['notifications-unread-count', user?.id],
+    queryFn: () => user?.id && notificationSystem ? notificationSystem.getUnreadCount(user.id) : 0,
+    enabled: !!user?.id && !!notificationSystem,
+    refetchInterval: 15 * 1000, // Refetch every 15 seconds
+    staleTime: 5 * 1000
+  })
+
+  // Mark as read mutation
+  const markAsReadMutation = useMutation({
+    mutationFn: (notificationId: string) => notificationSystem ? notificationSystem.markAsRead(notificationId) : Promise.resolve(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] })
+    }
+  })
+
+  // Mark all as read mutation
+  const markAllAsReadMutation = useMutation({
+    mutationFn: () => user?.id && notificationSystem ? notificationSystem.markAllAsRead(user.id) : Promise.resolve(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] })
+    }
+  })
+
+  // Delete notification mutation
+  const deleteNotificationMutation = useMutation({
+    mutationFn: (notificationId: string) => notificationSystem ? notificationSystem.deleteNotification(notificationId) : Promise.resolve(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] })
+    }
+  })
+
+  // Request permission for browser notifications
+  const requestPermission = useCallback(async () => {
+    return notificationSystem ? await notificationSystem.requestNotificationPermission() : false
+  }, [notificationSystem])
+
+  return {
+    notifications: notificationsQuery.data || [],
+    unreadCount: unreadCountQuery.data || 0,
+    isLoading: notificationsQuery.isLoading || unreadCountQuery.isLoading,
+    error: notificationsQuery.error || unreadCountQuery.error,
+    markAsRead: markAsReadMutation.mutate,
+    markAllAsRead: markAllAsReadMutation.mutate,
+    deleteNotification: deleteNotificationMutation.mutate,
+    requestPermission,
+    refetch: () => {
+      notificationsQuery.refetch()
+      unreadCountQuery.refetch()
+    }
+  }
+}
+
+export function useNotificationActions() {
+  const queryClient = useQueryClient()
+
+  const invalidateNotifications = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] })
+  }, [queryClient])
+
+  return {
+    invalidateNotifications
+  }
+}

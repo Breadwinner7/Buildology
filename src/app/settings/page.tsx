@@ -580,7 +580,7 @@ export default function WorkingSettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       <div className="p-8 max-w-6xl mx-auto space-y-8">
         {/* Enhanced Header */}
         <WorkingSettingsHeader profile={profile} organisation={organisation} />

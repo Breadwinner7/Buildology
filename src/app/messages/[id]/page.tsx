@@ -388,7 +388,7 @@ export default function MessageThreadPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="min-h-screen bg-background p-6">
         <div className="max-w-4xl mx-auto space-y-6">
           <Skeleton className="h-16 w-full" />
           <div className="space-y-4">
@@ -409,7 +409,7 @@ export default function MessageThreadPage() {
 
   if (!thread) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="min-h-screen bg-background p-6">
         <div className="max-w-4xl mx-auto">
           <Alert className="border-red-200 bg-red-50">
             <AlertCircle className="h-4 w-4" />
@@ -423,7 +423,7 @@ export default function MessageThreadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto flex flex-col h-screen">
         {/* Header */}
         <Card className="rounded-none border-0 border-b">

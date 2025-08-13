@@ -14,7 +14,7 @@ import { Separator } from '@/components/ui/separator'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { StatsCard, FeatureCard, ProjectCard, MetricCard } from '@/components/ui/enhanced-card'
 import { InsuranceAnalytics } from '@/components/charts/InsuranceAnalytics'
-import { LoadingState, LoadingSpinner } from '@/components/ui/loading'
+import { LoadingState, LoadingSpinner, SkeletonDashboard, SkeletonAnalytics } from '@/components/ui/loading'
 import { 
   Building2, 
   ClipboardList, 
@@ -76,7 +76,7 @@ const getStatusColor = (status: string) => {
     'snagging': 'bg-pink-500',
     'final_accounts': 'bg-indigo-500'
   }
-  return statusColors[status] || 'bg-gray-500'
+  return statusColors[status] || 'bg-muted'
 }
 
 const getPriorityColor = (priority: string) => {
@@ -84,8 +84,8 @@ const getPriorityColor = (priority: string) => {
     case 'urgent': return 'bg-red-500'
     case 'high': return 'bg-orange-500'
     case 'normal': return 'bg-blue-500'
-    case 'low': return 'bg-gray-500'
-    default: return 'bg-gray-500'
+    case 'low': return 'bg-muted'
+    default: return 'bg-muted'
   }
 }
 
@@ -94,25 +94,7 @@ const formatProjectStatus = (status: string) => {
 }
 
 // Loading skeleton for dashboard
-const DashboardSkeleton = () => (
-  <div className="min-h-screen bg-mesh">
-    <div className="p-6 max-w-screen-2xl mx-auto space-y-8">
-      <div className="space-y-4 animate-fade-in">
-        <div className="skeleton h-8 w-64 rounded-xl" />
-        <div className="skeleton h-4 w-96 rounded-lg" />
-      </div>
-      <LoadingState type="stats" />
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <LoadingState type="table" />
-        </div>
-        <div>
-          <LoadingState type="card" count={1} />
-        </div>
-      </div>
-    </div>
-  </div>
-)
+const DashboardSkeleton = () => <SkeletonDashboard />
 
 function ComprehensiveDashboard() {
   // Performance monitoring
@@ -155,7 +137,7 @@ function ComprehensiveDashboard() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="min-h-screen bg-background p-6">
         <div className="max-w-screen-2xl mx-auto">
           <DashboardSkeleton />
         </div>
@@ -209,8 +191,8 @@ function ComprehensiveDashboard() {
           </Alert>
         )}
 
-        {/* Enhanced KPI Grid with Beautiful Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {/* Enhanced KPI Grid with Beautiful Stats Cards - Mobile Optimized */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <StatsCard
             title="Active Projects"
             value={memoizedMetrics?.activeProjects || 0}
@@ -260,8 +242,8 @@ function ComprehensiveDashboard() {
           />
         </div>
 
-        {/* Secondary Metrics with Delayed Animation */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {/* Secondary Metrics with Delayed Animation - Mobile Optimized */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <MetricCard
             title="Projects On Hold"
             value={memoizedMetrics?.projectsOnHold || 0}
@@ -309,7 +291,7 @@ function ComprehensiveDashboard() {
           <InsuranceAnalytics />
         </div>
 
-        {/* Main Content Grid */}
+        {/* Main Content Grid - Mobile Optimized */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Primary Content */}
           <div className="lg:col-span-2 space-y-6">

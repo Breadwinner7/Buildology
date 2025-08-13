@@ -1,6 +1,19 @@
 // lib/data/projects.ts
+import { createClient } from '@/lib/supabaseClient';
+
+interface Project {
+  id: string;
+  [key: string]: any;
+}
+
+interface Task {
+  id: string;
+  [key: string]: any;
+}
+
 export class ProjectService {
   static async getProject(id: string): Promise<Project | null> {
+    const supabase = createClient();
     const { data } = await supabase
       .from('projects')
       .select(`
@@ -22,6 +35,7 @@ export class ProjectService {
   }
 
   static async getProjectTasks(projectId: string): Promise<Task[]> {
+    const supabase = createClient();
     const { data } = await supabase
       .from('tasks')
       .select(`
@@ -38,6 +52,7 @@ export class ProjectService {
   }
 
   static async getProjectDocuments(projectId: string): Promise<Document[]> {
+    const supabase = createClient();
     const { data } = await supabase
       .from('documents')
       .select(`

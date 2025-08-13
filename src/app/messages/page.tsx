@@ -51,7 +51,7 @@ import { format as formatDate } from 'date-fns'
 import { cn } from '@/lib/utils'
 
 const THREAD_PRIORITIES = [
-  { value: 'low', label: 'Low Priority', color: 'bg-gray-500' },
+  { value: 'low', label: 'Low Priority', color: 'bg-muted' },
   { value: 'normal', label: 'Normal', color: 'bg-blue-500' },
   { value: 'high', label: 'High Priority', color: 'bg-orange-500' },
   { value: 'urgent', label: 'Urgent', color: 'bg-red-500' }
@@ -178,7 +178,7 @@ function CreateThreadDialog({
               {users.map(user => (
                 <div
                   key={user.id}
-                  className="flex items-center gap-3 p-2 hover:bg-gray-50 cursor-pointer"
+                  className="flex items-center gap-3 p-2 hover:bg-muted cursor-pointer"
                   onClick={() => toggleParticipant(user.id)}
                 >
                   <Checkbox
@@ -373,7 +373,7 @@ export default function MessagesPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="min-h-screen bg-background p-6">
         <div className="max-w-screen-2xl mx-auto space-y-6">
           <div className="space-y-4">
             <Skeleton className="h-8 w-64" />
@@ -394,7 +394,7 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       <div className="p-6 max-w-screen-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -482,9 +482,9 @@ export default function MessagesPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">Archived</p>
-                  <p className="text-2xl font-bold text-gray-600">{messageStats.archived}</p>
+                  <p className="text-2xl font-bold text-muted-foreground">{messageStats.archived}</p>
                 </div>
-                <Archive className="w-8 h-8 text-gray-600" />
+                <Archive className="w-8 h-8 text-muted-foreground" />
               </div>
             </CardContent>
           </Card>

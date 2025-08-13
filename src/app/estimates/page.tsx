@@ -37,6 +37,7 @@ import {
   Clock,
   CheckCircle,
   AlertTriangle,
+  XCircle,
   Building2,
   Wrench,
   PaintBucket,
@@ -138,11 +139,11 @@ const estimateTemplates = [
 ]
 
 const statusConfig = {
-  draft: { label: 'Draft', color: 'bg-gray-500', variant: 'secondary' as const },
+  draft: { label: 'Draft', color: 'bg-muted', variant: 'secondary' as const },
   pending: { label: 'Pending Review', color: 'bg-yellow-500', variant: 'secondary' as const },
   approved: { label: 'Approved', color: 'bg-green-500', variant: 'default' as const },
   rejected: { label: 'Rejected', color: 'bg-red-500', variant: 'destructive' as const },
-  expired: { label: 'Expired', color: 'bg-gray-400', variant: 'outline' as const }
+  expired: { label: 'Expired', color: 'bg-muted', variant: 'outline' as const }
 }
 
 const categoryConfig = {
@@ -213,7 +214,7 @@ function EstimatesAndPricing() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-background p-6">
       <div className="max-w-screen-2xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -302,8 +303,8 @@ function EstimatesAndPricing() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-4">
                         <div>
-                          <Label htmlFor="title">Estimate Title</Label>
-                          <Input id="title" placeholder="Enter estimate title" />
+                          <Label htmlFor="title">Quote Title</Label>
+                          <Input id="title" placeholder="Enter quote title" />
                         </div>
                         <div>
                           <Label htmlFor="project">Select Project</Label>
@@ -358,9 +359,9 @@ function EstimatesAndPricing() {
                   </Button>
                   <Button onClick={() => {
                     setShowNewEstimateDialog(false)
-                    router.push('/estimates/new')
+                    router.push('/quotes/new')
                   }}>
-                    Create Estimate
+                    Create Quote
                   </Button>
                 </DialogFooter>
               </DialogContent>

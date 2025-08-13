@@ -121,13 +121,20 @@ const mockUsers: Pick<UserProfile, 'id' | 'first_name' | 'surname' | 'role'>[] =
 // API Functions
 const fetchThreads = async (filters?: Partial<MessageFilters>): Promise<Thread[]> => {
   try {
-    // Try to fetch real data first
+    // Check authentication first
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      console.warn('No session found, using mock data')
+      return mockThreads
+    }
+
+    // Try to fetch real data
     const { data, error } = await supabase
       .from('threads')
       .select(`
         *,
         project:projects (id, name),
-        created_by_user:user_profiles!created_by (id, first_name, surname)
+        created_by_user:user_profiles!threads_created_by_fkey (id, first_name, surname, full_name)
       `)
       .order('updated_at', { ascending: false })
 

@@ -1,15 +1,12 @@
 // app/layout.tsx
-'use client'
-
+import type { Metadata, Viewport } from "next"
 import "@/app/globals.css"
 import { Inter, JetBrains_Mono } from "next/font/google"
 import { cn } from "@/lib/utils"
 import { ThemeProvider } from "@/components/ui/theme-provider"
-import { Topbar } from "@/components/layout/Topbar"
-import { ClientOnly } from "@/components/shared/ClientOnly"
-import { Toaster } from "@/components/ui/sonner"
-import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { SkipNavigation } from "@/lib/accessibility"
+import { ConditionalTopbar } from "@/components/layout/ConditionalTopbar"
+import { Toaster } from "sonner"
+import { PageErrorBoundary } from "@/components/ui/error-boundary"
 import QueryProvider from "@/components/providers/QueryProvider"
 
 const fontSans = Inter({ 
@@ -24,7 +21,61 @@ const fontMono = JetBrains_Mono({
   display: 'swap',
 })
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const metadata: Metadata = {
+  title: {
+    default: "Buildology - Insurance Claims Management",
+    template: "%s | Buildology",
+  },
+  description: "Professional insurance claims management system for the UK market",
+  keywords: ["insurance", "claims", "management", "UK", "property", "construction"],
+  authors: [{ name: "Buildology Team" }],
+  creator: "Buildology",
+  openGraph: {
+    type: "website",
+    locale: "en_GB",
+    url: "https://buildology.co.uk",
+    siteName: "Buildology",
+    title: "Buildology - Insurance Claims Management",
+    description: "Professional insurance claims management system for the UK market",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Buildology",
+    description: "Professional insurance claims management system",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: 'white' },
+    { media: '(prefers-color-scheme: dark)', color: 'black' },
+  ],
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+}
+
+export default function RootLayout({ 
+  children 
+}: { 
+  children: React.ReactNode 
+}) {
   return (
     <html 
       lang="en-GB" 
@@ -33,37 +84,37 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body className={cn(
         "min-h-screen bg-background font-sans antialiased",
-        "selection:bg-primary/20 selection:text-primary",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        "selection:bg-primary/20 selection:text-primary"
       )}>
-        <ClientOnly>
-          <ErrorBoundary>
-            <QueryProvider>
-              <ThemeProvider 
-                attribute="class" 
-                defaultTheme="system" 
-                enableSystem
-                disableTransitionOnChange
-              >
-                <SkipNavigation />
-                <div className="relative flex flex-col min-h-screen">
-                  <Topbar />
-                  <main id="main-content" className="flex-1" tabIndex={-1}>
-                    {children}
-                  </main>
-                </div>
+        <PageErrorBoundary>
+          <QueryProvider>
+            <ThemeProvider 
+              attribute="class" 
+              defaultTheme="light" 
+              enableSystem={true}
+              disableTransitionOnChange={false}
+              storageKey="buildology-theme"
+            >
+              <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 bg-primary text-primary-foreground px-4 py-2 rounded">
+                Skip to main content
+              </a>
+              <div className="relative flex flex-col min-h-screen">
+                <ConditionalTopbar />
+                <main id="main-content" className="flex-1" tabIndex={-1}>
+                  {children}
+                </main>
+              </div>
 
-                <Toaster 
-                  position="bottom-right"
-                  toastOptions={{
-                    duration: 4000,
-                    className: "bg-background border-border text-foreground",
-                  }}
-                />
-              </ThemeProvider>
-            </QueryProvider>
-          </ErrorBoundary>
-        </ClientOnly>
+              <Toaster 
+                position="bottom-right"
+                toastOptions={{
+                  duration: 4000,
+                  className: "bg-background border-border text-foreground",
+                }}
+              />
+            </ThemeProvider>
+          </QueryProvider>
+        </PageErrorBoundary>
       </body>
     </html>
   )

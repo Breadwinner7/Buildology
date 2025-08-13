@@ -8,7 +8,11 @@ import {
   useApprovalMutations,
   getApprovalStatusColor,
   getApprovalStatusLabel,
-  getRequiredApprovalLevel
+  getReviewStatusColor,
+  getReviewStatusLabel,
+  getRequiredApprovalLevel,
+  requiresApproval,
+  requiresReview
 } from '@/hooks/useDocumentApprovals'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
@@ -49,7 +54,9 @@ import {
   AlertTriangle,
   Shield,
   Users,
-  MessageSquare
+  MessageSquare,
+  ChevronDown,
+  Plus
 } from 'lucide-react'
 
 interface Document {
@@ -121,32 +128,326 @@ const ALLOWED_FILE_TYPES = [
   'text/csv'
 ]
 
+const visibilityOptions = [
+  {
+    value: 'internal',
+    label: 'Internal Only',
+    description: 'Visible to internal staff and management only',
+    icon: '🏢',
+    color: 'text-slate-600'
+  },
+  {
+    value: 'contractors',
+    label: 'Internal + Contractors', 
+    description: 'Visible to internal staff and approved contractor network',
+    icon: '👷',
+    color: 'text-blue-600'
+  },
+  {
+    value: 'customers',
+    label: 'Internal + Customers',
+    description: 'Visible to internal staff and relevant policyholders/customers',
+    icon: '👥',
+    color: 'text-green-600'
+  },
+  {
+    value: 'public',
+    label: 'Public Access',
+    description: 'Publicly accessible document (use with caution)',
+    icon: '🌐',
+    color: 'text-orange-600'
+  }
+] as const
+
 export default function DocumentsModule({ projectId }: { projectId: string }) {
   const { user, isAdmin } = useUser()
   const [documents, setDocuments] = useState<Document[]>([])
   const [filteredType, setFilteredType] = useState<string>('All')
   const [selectedType, setSelectedType] = useState<string>('Report')
+  const [visibleToSuppliers, setVisibleToSuppliers] = useState(false)
+  const [visibleToPolicyholders, setVisibleToPolicyholders] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([])
   const [note, setNote] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [dateRange, setDateRange] = useState({ start: '', end: '' })
+  const [uploaderFilter, setUploaderFilter] = useState<string>('all')
+  const [uploaders, setUploaders] = useState<{id: string, name: string}[]>([])
+  const [hoveredDocument, setHoveredDocument] = useState<Document | null>(null)
+  const [hoverTimeout, setHoverTimeout] = useState<NodeJS.Timeout | null>(null)
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [editingDoc, setEditingDoc] = useState<Document | null>(null)
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const [editVisibleToSuppliers, setEditVisibleToSuppliers] = useState(false)
+  const [editVisibleToPolicyholders, setEditVisibleToPolicyholders] = useState(false)
+  const [editVisibility, setEditVisibility] = useState('internal')
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
   const [approvalDocument, setApprovalDocument] = useState<Document | null>(null)
   const [approvalComments, setApprovalComments] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
-  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'approved'>('all')
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
+  const [reviewDocument, setReviewDocument] = useState<Document | null>(null)
+  const [reviewComments, setReviewComments] = useState('')
+  const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'review'>('all')
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set())
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false)
+  const [showUploadSection, setShowUploadSection] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Approval mutations
-  const { approveDocument, rejectDocument } = useApprovalMutations()
+  const { approveDocument, rejectDocument, reviewDocument: reviewDocumentMutation } = useApprovalMutations()
+
+  // Multi-select functions
+  const handleDocumentClick = (doc: Document, event: React.MouseEvent) => {
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl/Cmd click - toggle selection
+      setIsMultiSelectMode(true)
+      const newSelected = new Set(selectedDocuments)
+      if (newSelected.has(doc.id)) {
+        newSelected.delete(doc.id)
+      } else {
+        newSelected.add(doc.id)
+      }
+      setSelectedDocuments(newSelected)
+      
+      // If no documents selected, exit multi-select mode
+      if (newSelected.size === 0) {
+        setIsMultiSelectMode(false)
+      }
+    } else if (isMultiSelectMode) {
+      // In multi-select mode, regular click also toggles
+      const newSelected = new Set(selectedDocuments)
+      if (newSelected.has(doc.id)) {
+        newSelected.delete(doc.id)
+      } else {
+        newSelected.add(doc.id)
+      }
+      setSelectedDocuments(newSelected)
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedDocuments.size === filteredDocuments.length) {
+      // Deselect all
+      setSelectedDocuments(new Set())
+      setIsMultiSelectMode(false)
+    } else {
+      // Select all visible documents
+      const allIds = new Set(filteredDocuments.map(doc => doc.id))
+      setSelectedDocuments(allIds)
+      setIsMultiSelectMode(true)
+    }
+  }
+
+  const exitMultiSelectMode = () => {
+    setSelectedDocuments(new Set())
+    setIsMultiSelectMode(false)
+  }
+
+  const handleBulkDownload = async () => {
+    const selectedDocs = filteredDocuments.filter(doc => selectedDocuments.has(doc.id))
+    for (const doc of selectedDocs) {
+      await handleDownload(doc)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedDocuments.size} documents?`)) return
+    
+    const selectedDocs = filteredDocuments.filter(doc => selectedDocuments.has(doc.id))
+    for (const doc of selectedDocs) {
+      if (isAdmin || doc.user_id === user?.id) {
+        await handleDelete(doc)
+      }
+    }
+    exitMultiSelectMode()
+  }
+
+  const handleBulkReview = async () => {
+    const selectedDocs = filteredDocuments.filter(doc => 
+      selectedDocuments.has(doc.id) && 
+      doc.review_status === 'unreviewed' && 
+      requiresReview(doc.type)
+    )
+    
+    if (selectedDocs.length === 0) {
+      toast({
+        title: "No Documents to Review",
+        description: "No unreviewed documents selected that require review",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      for (const doc of selectedDocs) {
+        await reviewDocumentMutation.mutateAsync({ 
+          documentId: doc.id, 
+          comments: `Bulk reviewed with ${selectedDocs.length - 1} other documents`
+        })
+      }
+      
+      toast({
+        title: "Documents Reviewed",
+        description: `${selectedDocs.length} documents marked as reviewed`,
+      })
+      
+      fetchDocuments()
+      exitMultiSelectMode()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to review documents: ${error.message}`,
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Hover preview handlers
+  const handleMouseEnter = (doc: Document) => {
+    if (hoverTimeout) clearTimeout(hoverTimeout)
+    const timeout = setTimeout(() => {
+      setHoveredDocument(doc)
+    }, 300) // 300ms delay before showing preview
+    setHoverTimeout(timeout)
+  }
+
+  const handleMouseLeave = () => {
+    if (hoverTimeout) clearTimeout(hoverTimeout)
+    setHoveredDocument(null)
+  }
+
+  // QuickPreview component
+  const QuickPreview = ({ doc }: { doc: Document }) => {
+    const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+      const getPreviewUrl = async () => {
+        if (isImage(doc.name)) {
+          try {
+            const { data, error } = await supabase.storage
+              .from('documents')
+              .createSignedUrl(doc.path, 60 * 5)
+
+            if (error) throw error
+            if (data?.signedUrl) setPreviewImageSrc(data.signedUrl)
+          } catch (error) {
+            console.log('Preview error:', error)
+          }
+        }
+        setLoading(false)
+      }
+
+      getPreviewUrl()
+    }, [doc.path, doc.name])
+
+    return (
+      <div className="w-80 p-4 bg-background border rounded-lg shadow-lg">
+        {/* Header */}
+        <div className="flex items-start gap-3 mb-3">
+          <div className="flex-shrink-0">
+            {getFileIcon(doc.name)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="font-medium text-sm truncate" title={doc.name}>
+              {doc.name}
+            </h4>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge variant="outline" className="text-xs">{doc.type}</Badge>
+              <span className="text-xs text-muted-foreground">
+                {formatFileSize(doc.file_size)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Image Preview */}
+        {isImage(doc.name) && (
+          <div className="mb-3">
+            {loading ? (
+              <div className="aspect-video bg-muted rounded flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              </div>
+            ) : previewImageSrc ? (
+              <img 
+                src={previewImageSrc} 
+                alt={doc.name} 
+                className="w-full aspect-video object-cover rounded border"
+              />
+            ) : (
+              <div className="aspect-video bg-muted rounded flex items-center justify-center text-muted-foreground">
+                Preview unavailable
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Document Details */}
+        <div className="space-y-2 text-xs">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-3 h-3 text-muted-foreground" />
+            <span>
+              {doc.uploaded_at ? format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a') : 'Unknown date'}
+            </span>
+          </div>
+          
+          {doc.uploaded_by && (
+            <div className="flex items-center gap-2">
+              <User className="w-3 h-3 text-muted-foreground" />
+              <span>
+                {doc.uploaded_by.preferred_name || 
+                 (doc.uploaded_by.first_name && doc.uploaded_by.surname ? 
+                  `${doc.uploaded_by.first_name} ${doc.uploaded_by.surname}` : 
+                  doc.uploaded_by.email)}
+              </span>
+            </div>
+          )}
+
+          {doc.note && (
+            <div className="flex items-start gap-2">
+              <MessageSquare className="w-3 h-3 text-muted-foreground mt-0.5" />
+              <span className="text-muted-foreground">{doc.note}</span>
+            </div>
+          )}
+
+          {/* Status and Visibility Information */}
+          <div className="flex flex-wrap gap-1 mt-2">
+            {doc.approval_status === 'pending' && (
+              <Badge className={cn("text-xs", getApprovalStatusColor(doc.approval_status))}>
+                {getApprovalStatusLabel(doc.approval_status)}
+              </Badge>
+            )}
+            {doc.approval_status === 'rejected' && (
+              <Badge className={cn("text-xs", getApprovalStatusColor(doc.approval_status))}>
+                {getApprovalStatusLabel(doc.approval_status)}
+              </Badge>
+            )}
+            {doc.review_status === 'unreviewed' && requiresReview(doc.type) && (
+              <Badge className={cn("text-xs", getReviewStatusColor(doc.review_status))}>
+                {getReviewStatusLabel(doc.review_status)}
+              </Badge>
+            )}
+            {doc.visibility_level && (
+              <Badge 
+                variant="outline" 
+                className={cn("text-xs", getVisibilityInfo(doc.visibility_level).color)}
+              >
+                <span className="mr-1">{getVisibilityInfo(doc.visibility_level).icon}</span>
+                {getVisibilityInfo(doc.visibility_level).label}
+              </Badge>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   useEffect(() => {
     console.log('🎯 DocumentsModule received projectId:', projectId, typeof projectId)
@@ -290,6 +591,26 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       console.log('✅ Successfully fetched and enriched documents:', enrichedData.length)
       setDocuments(enrichedData)
       
+      // Extract unique uploaders for filter dropdown
+      const uniqueUploaders = Array.from(
+        new Map(
+          enrichedData
+            .filter(doc => doc.uploaded_by)
+            .map(doc => [
+              doc.user_id, 
+              {
+                id: doc.user_id,
+                name: doc.uploaded_by?.preferred_name || 
+                      (doc.uploaded_by?.first_name && doc.uploaded_by?.surname ? 
+                       `${doc.uploaded_by.first_name} ${doc.uploaded_by.surname}` : 
+                       doc.uploaded_by?.email || 'Unknown')
+              }
+            ])
+        ).values()
+      ).sort((a, b) => a.name.localeCompare(b.name))
+      
+      setUploaders(uniqueUploaders)
+      
     } catch (error: any) {
       console.error('💥 Unexpected error:', error)
       toast({
@@ -409,8 +730,47 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
           index === i ? { ...item, progress: 75, status: 'processing' } : item
         ))
 
-        // Insert metadata
+        // Insert metadata with appropriate status based on document type
         console.log(`💾 Inserting metadata for ${file.name}`)
+        
+        // Determine workflow based on document type
+        const needsApproval = requiresApproval(selectedType)
+        const needsReview = requiresReview(selectedType)
+        
+        let approvalStatus, reviewStatus, workflowStage, visibilityLevel
+        let approvedBy = null, approvedAt = null, reviewedBy = null, reviewedAt = null
+        
+        if (needsApproval) {
+          // Blocking approval required - restrict visibility until approved
+          approvalStatus = 'pending'
+          reviewStatus = null
+          workflowStage = 'pending_approval'
+          visibilityLevel = 'internal' // Always internal until approved
+        } else if (needsReview) {
+          // Non-blocking review - immediately available with selected visibility
+          approvalStatus = 'available'
+          reviewStatus = 'unreviewed'
+          workflowStage = 'available'
+          visibilityLevel = getVisibilityLevel(visibleToSuppliers, visibleToPolicyholders)
+        } else {
+          // No special handling needed - use selected visibility
+          approvalStatus = 'available'
+          reviewStatus = null
+          workflowStage = 'available'
+          visibilityLevel = getVisibilityLevel(visibleToSuppliers, visibleToPolicyholders)
+          approvedBy = user.id
+          approvedAt = new Date().toISOString()
+        }
+        
+        console.log(`📋 Document workflow logic:`, {
+          type: selectedType,
+          needsApproval,
+          needsReview,
+          approvalStatus,
+          reviewStatus,
+          workflowStage
+        })
+        
         const { error: insertError, data: insertData } = await supabase
           .from('documents')
           .insert({
@@ -420,7 +780,15 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
             path: filePath,
             type: selectedType,
             note: note.trim() || null,
-            file_size: file.size
+            file_size: file.size,
+            approval_status: approvalStatus,
+            review_status: reviewStatus,
+            workflow_stage: workflowStage,
+            visibility_level: visibilityLevel,
+            approved_by: approvedBy,
+            approved_at: approvedAt,
+            reviewed_by: reviewedBy,
+            reviewed_at: reviewedAt
           })
 
         console.log(`📄 Database insert result for ${file.name}:`, { 
@@ -469,14 +837,27 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       setNote('')
       setSelectedFiles([])
       if (fileInputRef.current) fileInputRef.current.value = ''
+      setShowUploadSection(false) // Hide upload section after successful upload
       fetchDocuments()
     }, 2000)
   }
 
   const handleEdit = (doc: Document) => {
     setEditingDoc(doc)
-    setEditName(doc.name)
+    
+    // Extract filename without extension
+    const lastDotIndex = doc.name.lastIndexOf('.')
+    const nameWithoutExt = lastDotIndex !== -1 ? doc.name.substring(0, lastDotIndex) : doc.name
+    
+    setEditName(nameWithoutExt)
     setEditType(doc.type)
+    setEditNote(doc.note || '')
+    
+    // Convert visibility level to toggle states
+    const toggles = getVisibilityToggles(doc.visibility_level || 'internal')
+    setEditVisibleToSuppliers(toggles.suppliers)
+    setEditVisibleToPolicyholders(toggles.policyholders)
+    
     setEditDialogOpen(true)
   }
 
@@ -484,11 +865,20 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
     if (!editingDoc || !editName.trim()) return
 
     try {
+      // Extract original file extension
+      const lastDotIndex = editingDoc.name.lastIndexOf('.')
+      const fileExtension = lastDotIndex !== -1 ? editingDoc.name.substring(lastDotIndex) : ''
+      
+      // Reconstruct filename with extension
+      const newFullName = editName.trim() + fileExtension
+
       const { error } = await supabase
         .from('documents')
         .update({
-          name: editName.trim(),
-          type: editType
+          name: newFullName,
+          type: editType,
+          note: editNote.trim() || null,
+          visibility_level: getVisibilityLevel(editVisibleToSuppliers, editVisibleToPolicyholders)
         })
         .eq('id', editingDoc.id)
 
@@ -496,11 +886,14 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
 
       toast({
         title: "Document Updated",
-        description: `${editingDoc.name} has been updated`,
+        description: `Document has been updated successfully`,
       })
 
       setEditDialogOpen(false)
       setEditingDoc(null)
+      setEditName('')
+      setEditType('')
+      setEditNote('')
       fetchDocuments()
     } catch (error: any) {
       toast({
@@ -541,8 +934,19 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
   }
 
   const handleApprove = (doc: Document) => {
+    console.log('handleApprove called with doc:', doc)
+    console.log('Setting approval dialog open...')
     setApprovalDocument(doc)
     setApprovalDialogOpen(true)
+    console.log('Approval dialog state set:', { approvalDocument: doc, approvalDialogOpen: true })
+  }
+
+  const handleReview = (doc: Document) => {
+    console.log('handleReview called with doc:', doc)
+    console.log('Setting review dialog open...')
+    setReviewDocument(doc)
+    setReviewDialogOpen(true)
+    console.log('Review dialog state set:', { reviewDocument: doc, reviewDialogOpen: true })
   }
 
   const handleApproveDocument = async () => {
@@ -596,6 +1000,33 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       toast({
         title: "Error",
         description: `Failed to reject document: ${error.message}`,
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleReviewDocument = async () => {
+    if (!reviewDocument) return
+
+    try {
+      await reviewDocumentMutation.mutateAsync({ 
+        documentId: reviewDocument.id, 
+        comments: reviewComments.trim() || undefined
+      })
+      
+      toast({
+        title: "Document Reviewed",
+        description: `${reviewDocument.name} has been marked as reviewed`,
+      })
+      
+      setReviewDialogOpen(false)
+      setReviewDocument(null)
+      setReviewComments('')
+      fetchDocuments()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to review document: ${error.message}`,
         variant: "destructive",
       })
     }
@@ -674,22 +1105,38 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       let matchesTab = true
       if (activeTab === 'pending') {
         matchesTab = doc.approval_status === 'pending'
-      } else if (activeTab === 'approved') {
-        matchesTab = doc.approval_status === 'approved'
+      } else if (activeTab === 'review') {
+        matchesTab = doc.review_status === 'unreviewed'
       }
       
-      return matchesType && matchesSearch && matchesTab
+      // Filter by date range
+      let matchesDate = true
+      if (dateRange.start || dateRange.end) {
+        const docDate = new Date(doc.uploaded_at)
+        if (dateRange.start && docDate < new Date(dateRange.start)) {
+          matchesDate = false
+        }
+        if (dateRange.end && docDate > new Date(dateRange.end + 'T23:59:59')) {
+          matchesDate = false
+        }
+      }
+      
+      // Filter by uploader
+      let matchesUploader = uploaderFilter === 'all' || doc.user_id === uploaderFilter
+      
+      return matchesType && matchesSearch && matchesTab && matchesDate && matchesUploader
     })
-  }, [documents, filteredType, searchQuery, activeTab])
+  }, [documents, filteredType, searchQuery, activeTab, dateRange, uploaderFilter])
 
   // Document statistics
   const documentStats = useMemo(() => {
     const total = documents.length
     const pending = documents.filter(d => d.approval_status === 'pending').length
-    const approved = documents.filter(d => d.approval_status === 'approved').length
+    const approved = documents.filter(d => d.approval_status === 'approved' || d.approval_status === 'available').length
     const rejected = documents.filter(d => d.approval_status === 'rejected').length
+    const needsReview = documents.filter(d => d.review_status === 'unreviewed').length
     
-    return { total, pending, approved, rejected }
+    return { total, pending, approved, rejected, needsReview }
   }, [documents])
 
   const isImage = (filename: string) => /\.(jpg|jpeg|png|gif|webp)$/i.test(filename)
@@ -699,6 +1146,28 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(1024))
     return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i]
+  }
+
+  const getVisibilityInfo = (level: string) => {
+    return visibilityOptions.find(opt => opt.value === level) || visibilityOptions[0]
+  }
+
+  // Convert toggle states to visibility level
+  const getVisibilityLevel = (suppliers: boolean, policyholders: boolean) => {
+    if (suppliers && policyholders) return 'public'
+    if (policyholders) return 'customers'
+    if (suppliers) return 'contractors'
+    return 'internal'
+  }
+
+  // Convert visibility level to toggle states
+  const getVisibilityToggles = (level: string) => {
+    switch (level) {
+      case 'public': return { suppliers: true, policyholders: true }
+      case 'customers': return { suppliers: false, policyholders: true }
+      case 'contractors': return { suppliers: true, policyholders: false }
+      default: return { suppliers: false, policyholders: false }
+    }
   }
 
   const getFileIcon = (filename: string) => {
@@ -820,8 +1289,17 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       return null
     }
 
+    const isSelected = selectedDocuments.has(doc.id)
+
     return (
-      <Card className="group hover:shadow-lg transition-all duration-200 border-0 shadow-sm hover:scale-[1.02]">
+      <Card 
+        className={cn(
+          "group hover:shadow-lg transition-all duration-200 border-0 shadow-sm hover:scale-[1.02]",
+          isSelected && "ring-2 ring-primary bg-primary/5",
+          isMultiSelectMode && "cursor-pointer"
+        )}
+        onClick={(e) => handleDocumentClick(doc, e)}
+      >
         <CardContent className="p-4 h-full flex flex-col">
         {/* Preview */}
         <div className="aspect-video bg-gradient-to-br from-muted/50 to-muted rounded-xl mb-3 overflow-hidden relative shadow-inner">
@@ -856,16 +1334,55 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
             </div>
           </div>
           
-          {/* File type and approval status indicators */}
+          {/* Multi-select checkbox */}
+          {isMultiSelectMode && (
+            <div className="absolute top-2 left-2 z-10">
+              <div className={cn(
+                "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                isSelected ? "bg-primary border-primary text-primary-foreground" : "bg-white/90 border-gray-400"
+              )}>
+                {isSelected && <CheckCircle className="w-3 h-3" />}
+              </div>
+            </div>
+          )}
+
+          {/* File type and status indicators */}
           <div className="absolute top-2 right-2 flex flex-col gap-1">
             <Badge variant="secondary" className="text-xs shadow-sm">
               {doc.type}
             </Badge>
-            {doc.approval_status && (
+            
+            {/* Visibility indicator */}
+            {doc.visibility_level && doc.visibility_level !== 'internal' && (
+              <Badge 
+                variant="outline" 
+                className={cn("text-xs shadow-sm bg-white/90", getVisibilityInfo(doc.visibility_level).color)}
+              >
+                <span className="mr-1">{getVisibilityInfo(doc.visibility_level).icon}</span>
+                {getVisibilityInfo(doc.visibility_level).label.split(' ')[0]}
+              </Badge>
+            )}
+            
+            {/* Only show status badges that require action or are important */}
+            {doc.approval_status === 'pending' && (
               <Badge 
                 className={cn("text-xs shadow-sm text-white", getApprovalStatusColor(doc.approval_status))}
               >
                 {getApprovalStatusLabel(doc.approval_status)}
+              </Badge>
+            )}
+            {doc.approval_status === 'rejected' && (
+              <Badge 
+                className={cn("text-xs shadow-sm text-white", getApprovalStatusColor(doc.approval_status))}
+              >
+                {getApprovalStatusLabel(doc.approval_status)}
+              </Badge>
+            )}
+            {doc.review_status === 'unreviewed' && requiresReview(doc.type) && (
+              <Badge 
+                className={cn("text-xs shadow-sm text-white", getReviewStatusColor(doc.review_status))}
+              >
+                {getReviewStatusLabel(doc.review_status)}
               </Badge>
             )}
           </div>
@@ -915,6 +1432,13 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
             </div>
           )}
 
+          {doc.visibility_level && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>{getVisibilityInfo(doc.visibility_level).icon}</span>
+              <span>{getVisibilityInfo(doc.visibility_level).label}</span>
+            </div>
+          )}
+
           {/* Fixed height container for notes to maintain card alignment */}
           <div className="h-8 flex items-start">
             {doc.note && (
@@ -927,10 +1451,37 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
 
         {/* Enhanced Actions */}
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
-          <Button variant="outline" size="sm" onClick={() => handleDownload(doc)} className="hover:bg-primary hover:text-primary-foreground transition-colors">
-            <Download className="w-3 h-3 mr-1" />
-            Download
-          </Button>
+          {/* Show action buttons based on document type and status */}
+          {isAdmin && doc.approval_status === 'pending' && requiresApproval(doc.type) ? (
+            <Button 
+              size="sm" 
+              onClick={() => {
+                console.log('Direct approve button clicked for doc:', doc.id)
+                handleApprove(doc)
+              }}
+              className="bg-orange-600 hover:bg-orange-700 text-white transition-colors"
+            >
+              <CheckCircle className="w-3 h-3 mr-1" />
+              Approve Required
+            </Button>
+          ) : isAdmin && doc.review_status === 'unreviewed' && requiresReview(doc.type) ? (
+            <Button 
+              size="sm" 
+              onClick={() => {
+                console.log('Direct review button clicked for doc:', doc.id)
+                handleReview(doc)
+              }}
+              className="bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+            >
+              <Eye className="w-3 h-3 mr-1" />
+              Review
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => handleDownload(doc)} className="hover:bg-primary hover:text-primary-foreground transition-colors">
+              <Download className="w-3 h-3 mr-1" />
+              Download
+            </Button>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -954,13 +1505,32 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
               </DropdownMenuItem>
               
               {/* Approval actions for authorized users */}
-              {isAdmin && doc.approval_status === 'pending' && (
-                <>
-                  <DropdownMenuItem onClick={() => handleApprove(doc)} className="cursor-pointer text-green-600">
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Review/Approve
-                  </DropdownMenuItem>
-                </>
+              {console.log('Approval Debug:', { 
+                isAdmin, 
+                docStatus: doc.approval_status, 
+                showApproval: isAdmin && doc.approval_status === 'pending',
+                userRole: user?.role
+              })}
+              {/* Approval options for documents that require approval */}
+              {isAdmin && doc.approval_status === 'pending' && requiresApproval(doc.type) && (
+                <DropdownMenuItem onClick={() => {
+                  console.log('Approve clicked for doc:', doc.id)
+                  handleApprove(doc)
+                }} className="cursor-pointer text-orange-600">
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Approve Document
+                </DropdownMenuItem>
+              )}
+              
+              {/* Review options for documents that need review */}
+              {isAdmin && doc.review_status === 'unreviewed' && requiresReview(doc.type) && (
+                <DropdownMenuItem onClick={() => {
+                  console.log('Review clicked for doc:', doc.id)
+                  handleReview(doc)
+                }} className="cursor-pointer text-blue-600">
+                  <Eye className="w-4 h-4 mr-2" />
+                  Mark as Reviewed
+                </DropdownMenuItem>
               )}
               
               {(isAdmin || doc.user_id === user?.id) && (
@@ -987,202 +1557,341 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Project Documents</h2>
-          <p className="text-muted-foreground">
-            Upload and manage documents with approval workflows
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="grid grid-cols-4 gap-2 text-center">
-            <div>
-              <div className="text-lg font-bold">{documentStats.total}</div>
-              <div className="text-xs text-muted-foreground">Total</div>
+    <div className="space-y-4">
+      {/* Compact Header */}
+      <div className="bg-gradient-to-r from-slate-50 to-blue-50 rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <FileText className="w-5 h-5 text-blue-600" />
+              Project Documents
+            </h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Manage, review and approve project documentation
+            </p>
+          </div>
+          
+          {/* Document Stats Cards */}
+          <div className="flex gap-3">
+            <div className="bg-white rounded-lg px-4 py-2 shadow-sm border">
+              <div className="text-2xl font-bold">{documentStats.total}</div>
+              <div className="text-xs text-muted-foreground">Total Files</div>
             </div>
-            <div>
-              <div className="text-lg font-bold text-yellow-600">{documentStats.pending}</div>
-              <div className="text-xs text-muted-foreground">Pending</div>
-            </div>
-            <div>
-              <div className="text-lg font-bold text-green-600">{documentStats.approved}</div>
-              <div className="text-xs text-muted-foreground">Approved</div>
-            </div>
-            <div>
-              <div className="text-lg font-bold text-red-600">{documentStats.rejected}</div>
-              <div className="text-xs text-muted-foreground">Rejected</div>
-            </div>
+            {documentStats.pending > 0 && (
+              <div className="bg-orange-50 rounded-lg px-4 py-2 shadow-sm border border-orange-200">
+                <div className="text-2xl font-bold text-orange-600">{documentStats.pending}</div>
+                <div className="text-xs text-orange-700">Awaiting Approval</div>
+              </div>
+            )}
+            {documentStats.needsReview > 0 && (
+              <div className="bg-blue-50 rounded-lg px-4 py-2 shadow-sm border border-blue-200">
+                <div className="text-2xl font-bold text-blue-600">{documentStats.needsReview}</div>
+                <div className="text-xs text-blue-700">Need Review</div>
+              </div>
+            )}
+            {documentStats.rejected > 0 && (
+              <div className="bg-red-50 rounded-lg px-4 py-2 shadow-sm border border-red-200">
+                <div className="text-2xl font-bold text-red-600">{documentStats.rejected}</div>
+                <div className="text-xs text-red-700">Rejected</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Upload Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="w-5 h-5" />
-            Upload Documents
-          </CardTitle>
-          <CardDescription>
-            Upload multiple files at once. Supported formats: Images, PDFs, Word, Excel, Text files (Max 50MB each)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Document Type */}
-            <div className="space-y-2">
-              <Label>Document Type</Label>
-              <Select value={selectedType} onValueChange={setSelectedType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {documentTypes.slice(1).map((type) => (
-                    <SelectItem key={type} value={type}>{type}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
 
-            {/* File Selection */}
-            <div className="space-y-2">
-              <Label>Select Files</Label>
-              <div className="relative">
-                <Input
-                  type="file"
-                  multiple
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="flex items-center justify-center w-full h-10 px-3 py-2 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer">
-                  <Upload className="w-4 h-4 mr-2" />
-                  {selectedFiles.length > 0 ? `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} selected` : 'Choose Files'}
-                </div>
-              </div>
-            </div>
+      {/* Workflow Tabs & Actions */}
+      <div className="bg-white rounded-lg border p-2">
+        <div className="flex items-center justify-between gap-4">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="flex-1">
+            <TabsList className="h-10 bg-slate-50">
+              <TabsTrigger value="all" className="data-[state=active]:bg-white">
+                <FileText className="w-3.5 h-3.5 mr-1.5" />
+                All Documents
+                <Badge variant="secondary" className="ml-2 h-5 px-1.5">
+                  {documentStats.total}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="pending" className="data-[state=active]:bg-white">
+                <AlertTriangle className="w-3.5 h-3.5 mr-1.5 text-orange-500" />
+                Awaiting Approval
+                {documentStats.pending > 0 && (
+                  <Badge className="ml-2 h-5 px-1.5 bg-orange-500">
+                    {documentStats.pending}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="review" className="data-[state=active]:bg-white">
+                <Eye className="w-3.5 h-3.5 mr-1.5 text-blue-500" />
+                Need Review
+                {documentStats.needsReview > 0 && (
+                  <Badge className="ml-2 h-5 px-1.5 bg-blue-500">
+                    {documentStats.needsReview}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-            {/* Notes */}
-            <div className="space-y-2">
-              <Label>Notes (optional)</Label>
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Add notes for all files..."
-                className="min-h-[40px]"
-              />
-            </div>
-
-            {/* Upload Button */}
-            <div className="space-y-2">
-              <Label>&nbsp;</Label>
+          {/* Quick Actions */}
+          <div className="flex gap-2">
+            {/* Upload Toggle Button */}
+            <Button
+              variant={showUploadSection ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowUploadSection(!showUploadSection)}
+              className="h-10 text-xs"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
+              Upload
+              <ChevronDown className={cn(
+                "w-3.5 h-3.5 ml-1.5 transition-transform",
+                showUploadSection && "rotate-180"
+              )} />
+            </Button>
+            
+            {!isMultiSelectMode && (
               <Button
-                onClick={handleUpload}
-                disabled={uploading || selectedFiles.length === 0}
-                className="w-full"
+                variant="outline"
+                size="sm"
+                onClick={toggleSelectAll}
+                className="h-10"
               >
-                {uploading ? 'Uploading...' : 'Upload Files'}
+                <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                Select All
+              </Button>
+            )}
+            <Button
+              variant={isMultiSelectMode ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => isMultiSelectMode ? exitMultiSelectMode() : setIsMultiSelectMode(true)}
+              className="h-10"
+            >
+              <Users className="w-3.5 h-3.5 mr-1.5" />
+              {isMultiSelectMode ? 'Exit' : 'Multi-Select'}
+            </Button>
+            <div className="flex gap-1 border-l pl-2">
+              <Button
+                variant={viewMode === 'grid' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('grid')}
+                className="h-10 w-10 p-0"
+              >
+                <Grid className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant={viewMode === 'list' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('list')}
+                className="h-10 w-10 p-0"
+              >
+                <List className="w-3.5 h-3.5" />
               </Button>
             </div>
           </div>
-
-          {/* Selected Files Preview */}
-          {selectedFiles.length > 0 && (
-            <div className="space-y-2">
-              <Label>Selected Files ({selectedFiles.length})</Label>
-              <div className="max-h-32 overflow-y-auto space-y-2">
-                {selectedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center justify-between p-2 bg-muted/50 rounded-md">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <div className="flex-shrink-0">
-                        {getFileIcon(file.name)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate" title={file.name}>
-                          {file.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatFileSize(file.size)}
-                        </p>
+        </div>
+        
+        {/* Upload Dropdown - appears right below tabs */}
+        {showUploadSection && (
+          <div className="mt-2 p-4 bg-white rounded-lg shadow-lg border animate-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-sm text-gray-900">Upload New Documents</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowUploadSection(false)}
+                className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="space-y-4">
+              {/* Main Form Row */}
+              <div className="grid grid-cols-12 gap-4 items-end">
+                {/* File Selection - 4 cols (shorter) */}
+                <div className="col-span-4">
+                  <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Files</Label>
+                  <div className="relative">
+                    <Input
+                      type="file"
+                      multiple
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="border-2 border-dashed border-gray-200 rounded-lg px-3 py-2.5 hover:border-blue-400 hover:bg-blue-50/50 transition-all cursor-pointer h-[42px] flex items-center">
+                      <div className="flex items-center gap-2 w-full">
+                        <Upload className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {selectedFiles.length > 0 
+                              ? `${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''} selected` 
+                              : 'Choose files'}
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Document Type - 3 cols */}
+                <div className="col-span-3">
+                  <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Type</Label>
+                  <Select value={selectedType} onValueChange={setSelectedType}>
+                    <SelectTrigger className="h-[42px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {documentTypes.slice(1).map((type) => (
+                        <SelectItem key={type} value={type}>{type}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Visibility Options - 5 cols */}
+                <div className="col-span-5">
+                  <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Share with</Label>
+                  <div className="flex gap-2">
                     <Button
-                      variant="ghost"
+                      type="button"
+                      variant={visibleToSuppliers ? "default" : "outline"}
                       size="sm"
-                      onClick={() => removeFile(index)}
-                      className="flex-shrink-0 h-6 w-6 p-0"
+                      onClick={() => setVisibleToSuppliers(!visibleToSuppliers)}
+                      className="flex-1 h-[42px] text-xs"
                     >
-                      <XCircle className="w-3 h-3" />
+                      <Users className="w-3 h-3 mr-1" />
+                      Suppliers
                     </Button>
+                    <Button
+                      type="button"
+                      variant={visibleToPolicyholders ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setVisibleToPolicyholders(!visibleToPolicyholders)}
+                      className="flex-1 h-[42px] text-xs"
+                    >
+                      <Shield className="w-3 h-3 mr-1" />
+                      Policyholders
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Second Row: Notes and Upload */}
+              <div className="grid grid-cols-12 gap-4 items-end">
+                {/* Notes - 8 cols */}
+                <div className="col-span-8">
+                  <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Notes (optional)</Label>
+                  <Input
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="Add notes about these documents..."
+                    className="h-[42px]"
+                  />
+                </div>
+
+                {/* Upload Button - 4 cols (plenty of space) */}
+                <div className="col-span-4">
+                  <Label className="text-xs font-medium text-transparent mb-1.5 block">Action</Label>
+                  <Button
+                    onClick={handleUpload}
+                    disabled={uploading || selectedFiles.length === 0}
+                    className="h-[42px] w-full px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                  >
+                    {uploading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Uploading...</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Upload className="w-4 h-4" />
+                        <span>Upload Documents</span>
+                      </div>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Selected Files Preview - Compact */}
+            {selectedFiles.length > 0 && (
+              <div className="mt-3 p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-xs font-medium">Selected Files</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedFiles([])}
+                    className="h-6 text-xs px-2"
+                  >
+                    Clear all
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedFiles.map((file, index) => (
+                    <div key={index} className="flex items-center gap-1.5 px-3 py-1.5 bg-white rounded border text-xs">
+                      {getFileIcon(file.name)}
+                      <span className="max-w-[120px] truncate" title={file.name}>
+                        {file.name}
+                      </span>
+                      <button
+                        onClick={() => removeFile(index)}
+                        className="ml-1 hover:text-red-600 transition-colors"
+                      >
+                        <XCircle className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload Progress - Inline */}
+            {uploadProgress.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {uploadProgress.map((item, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="truncate">{item.filename}</span>
+                        <span className="text-muted-foreground">
+                          {item.status === 'complete' ? '✓' : 
+                           item.status === 'error' ? '✗' : `${item.progress}%`}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={item.progress} 
+                        className={`h-1 ${item.status === 'error' ? 'bg-red-100' : ''}`}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
+      </div>
 
-          {/* Upload Progress */}
-          {uploadProgress.length > 0 && (
-            <div className="space-y-2">
-              <Label>Upload Progress</Label>
-              {uploadProgress.map((item, index) => (
-                <div key={index} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="truncate">{item.filename}</span>
-                    <span className="text-muted-foreground">
-                      {item.status === 'complete' ? 'Complete' : 
-                       item.status === 'error' ? 'Error' : `${item.progress}%`}
-                    </span>
-                  </div>
-                  <Progress 
-                    value={item.progress} 
-                    className={`h-2 ${item.status === 'error' ? 'bg-red-100' : ''}`}
-                  />
-                  {item.error && (
-                    <p className="text-xs text-red-600">{item.error}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Approval Workflow Tabs */}
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="all">All Documents ({documentStats.total})</TabsTrigger>
-          <TabsTrigger value="pending">
-            <Clock className="w-4 h-4 mr-2" />
-            Pending Approval ({documentStats.pending})
-          </TabsTrigger>
-          <TabsTrigger value="approved">
-            <CheckCircle className="w-4 h-4 mr-2" />
-            Approved ({documentStats.approved})
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* Filters and Search */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="flex flex-col sm:flex-row gap-2 flex-1">
+      {/* Filters Bar - Streamlined */}
+      <div className="bg-white rounded-lg border p-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Search */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
               placeholder="Search documents..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="pl-8 h-8 text-sm"
             />
           </div>
 
           {/* Type Filter */}
           <Select value={filteredType} onValueChange={setFilteredType}>
-            <SelectTrigger className="w-48">
-              <Filter className="w-4 h-4 mr-2" />
+            <SelectTrigger className="w-40 h-8 text-sm">
+              <Filter className="w-3 h-3 mr-1.5" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1191,26 +1900,115 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
               ))}
             </SelectContent>
           </Select>
-        </div>
 
-        {/* View Mode Toggle */}
-        <div className="flex gap-1">
-          <Button
-            variant={viewMode === 'grid' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('grid')}
-          >
-            <Grid className="w-4 h-4" />
-          </Button>
-          <Button
-            variant={viewMode === 'list' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('list')}
-          >
-            <List className="w-4 h-4" />
-          </Button>
+          {/* Uploader Filter */}
+          <Select value={uploaderFilter} onValueChange={setUploaderFilter}>
+            <SelectTrigger className="w-40 h-8 text-sm">
+              <User className="w-3 h-3 mr-1.5" />
+              <SelectValue placeholder="All uploaders" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Uploaders</SelectItem>
+              {uploaders.map((uploader) => (
+                <SelectItem key={uploader.id} value={uploader.id}>{uploader.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Date Range */}
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground whitespace-nowrap">Date:</Label>
+            <div className="relative">
+              <Input
+                type="date"
+                value={dateRange.start}
+                onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                className="h-8 text-sm w-36 pr-8"
+              />
+            </div>
+            <span className="text-xs text-muted-foreground">to</span>
+            <div className="relative">
+              <Input
+                type="date"
+                value={dateRange.end}
+                onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                className="h-8 text-sm w-36 pr-8"
+              />
+            </div>
+            {(dateRange.start || dateRange.end) && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setDateRange({ start: '', end: '' })}
+                className="h-8 px-2"
+                title="Clear dates"
+              >
+                <XCircle className="w-3 h-3" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Bulk Actions Toolbar - Compact */}
+      {isMultiSelectMode && selectedDocuments.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Badge className="bg-blue-600">{selectedDocuments.size} selected</Badge>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={toggleSelectAll}
+                className="h-7 text-xs"
+              >
+                {selectedDocuments.size === filteredDocuments.length ? 'Deselect All' : 'Select All'}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleBulkDownload}
+                className="h-7 text-xs"
+              >
+                <Download className="w-3 h-3 mr-1" />
+                Download
+              </Button>
+              {isAdmin && (
+                <>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleBulkReview}
+                    className="h-7 text-xs"
+                  >
+                    <Eye className="w-3 h-3 mr-1" />
+                    Review
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    onClick={handleBulkDelete}
+                    className="h-7 text-xs"
+                  >
+                    <Trash2 className="w-3 h-3 mr-1" />
+                    Delete
+                  </Button>
+                </>
+              )}
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={exitMultiSelectMode}
+                className="h-7 w-7 p-0"
+              >
+                <XCircle className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Documents Grid/List */}
       {filteredDocuments.length === 0 ? (
@@ -1244,17 +2042,69 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
               })
             }
             
+            const isSelected = selectedDocuments.has(doc.id)
+            
             return viewMode === 'grid' ? (
               <DocumentCard key={doc.id || index} doc={doc} />
             ) : (
-              <Card key={doc.id} className="hover:shadow-sm transition-shadow">
+              <Popover key={doc.id || index} open={hoveredDocument?.id === doc.id}>
+                <PopoverTrigger asChild>
+                  <Card 
+                    className={cn(
+                      "hover:shadow-sm transition-all cursor-pointer",
+                      isSelected && "ring-2 ring-primary bg-primary/5"
+                    )}
+                    onClick={(e) => handleDocumentClick(doc, e)}
+                    onMouseEnter={() => handleMouseEnter(doc)}
+                    onMouseLeave={handleMouseLeave}
+                  >
                 <CardContent className="p-4">
                   <div className="flex items-center gap-4">
+                    {/* Multi-select checkbox */}
+                    {isMultiSelectMode && (
+                      <div className="flex-shrink-0">
+                        <div className={cn(
+                          "w-5 h-5 rounded border-2 flex items-center justify-center transition-all",
+                          isSelected ? "bg-primary border-primary text-primary-foreground" : "border-gray-400"
+                        )}>
+                          {isSelected && <CheckCircle className="w-3 h-3" />}
+                        </div>
+                      </div>
+                    )}
+                    
                     <div className="flex-shrink-0">
                       {getFileIcon(doc.name)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-medium truncate">{doc.name}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium truncate">{doc.name}</h4>
+                        {/* Status badges */}
+                        {doc.approval_status === 'pending' && (
+                          <Badge className={cn("text-xs", getApprovalStatusColor(doc.approval_status))}>
+                            {getApprovalStatusLabel(doc.approval_status)}
+                          </Badge>
+                        )}
+                        {doc.approval_status === 'rejected' && (
+                          <Badge className={cn("text-xs", getApprovalStatusColor(doc.approval_status))}>
+                            {getApprovalStatusLabel(doc.approval_status)}
+                          </Badge>
+                        )}
+                        {doc.review_status === 'unreviewed' && requiresReview(doc.type) && (
+                          <Badge className={cn("text-xs", getReviewStatusColor(doc.review_status))}>
+                            {getReviewStatusLabel(doc.review_status)}
+                          </Badge>
+                        )}
+                        {/* Visibility indicator for list view */}
+                        {doc.visibility_level && doc.visibility_level !== 'internal' && (
+                          <Badge 
+                            variant="outline" 
+                            className={cn("text-xs", getVisibilityInfo(doc.visibility_level).color)}
+                          >
+                            <span className="mr-1">{getVisibilityInfo(doc.visibility_level).icon}</span>
+                            {getVisibilityInfo(doc.visibility_level).label.split(' ')[0]}
+                          </Badge>
+                        )}
+                      </div>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span>{doc.type}</span>
                         <span>{formatFileSize(doc.file_size)}</span>
@@ -1262,17 +2112,57 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
                           {doc.uploaded_at ? format(new Date(doc.uploaded_at), 'MMM d, yyyy • h:mm a') : 'Unknown date'}
                         </span>
                       </div>
+                      {doc.note && (
+                        <p className="text-xs text-muted-foreground italic mt-1">{doc.note}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleDownload(doc)}>
-                        <Download className="w-4 h-4" />
-                      </Button>
+                      {/* Priority action buttons for workflow */}
+                      {isAdmin && doc.approval_status === 'pending' && requiresApproval(doc.type) ? (
+                        <Button 
+                          size="sm" 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleApprove(doc)
+                          }}
+                          className="bg-orange-600 hover:bg-orange-700 text-white"
+                        >
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Approve
+                        </Button>
+                      ) : isAdmin && doc.review_status === 'unreviewed' && requiresReview(doc.type) ? (
+                        <Button 
+                          size="sm" 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleReview(doc)
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          <Eye className="w-3 h-3 mr-1" />
+                          Review
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={(e) => {
+                          e.stopPropagation()
+                          handleDownload(doc)
+                        }}>
+                          <Download className="w-4 h-4" />
+                        </Button>
+                      )}
+                      
                       {(isAdmin || doc.user_id === user?.id) && (
                         <>
-                          <Button variant="ghost" size="sm" onClick={() => handleEdit(doc)}>
+                          <Button variant="ghost" size="sm" onClick={(e) => {
+                            e.stopPropagation()
+                            handleEdit(doc)
+                          }}>
                             <FileText className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(doc)}>
+                          <Button variant="ghost" size="sm" onClick={(e) => {
+                            e.stopPropagation()
+                            handleDelete(doc)
+                          }}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </>
@@ -1280,11 +2170,21 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 </CardContent>
-              </Card>
+                  </Card>
+                </PopoverTrigger>
+                <PopoverContent 
+                  side="right" 
+                  align="start" 
+                  className="p-0 w-auto border-0 shadow-lg"
+                >
+                  <QuickPreview doc={doc} />
+                </PopoverContent>
+              </Popover>
             )
           })}
         </div>
       )}
+
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -1309,17 +2209,28 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
           <DialogHeader>
             <DialogTitle>Edit Document Details</DialogTitle>
             <DialogDescription>
-              Update the name and type for this document
+              Update the document name, type, and notes
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Document Name</Label>
-              <Input
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                placeholder="Enter document name..."
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Enter document name..."
+                  className="flex-1"
+                />
+                {editingDoc && (
+                  <Badge variant="secondary" className="text-xs">
+                    {editingDoc.name.substring(editingDoc.name.lastIndexOf('.')) || ''}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                File extension will be preserved automatically
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Document Type</Label>
@@ -1334,6 +2245,47 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label>Visibility</Label>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="edit-visible-suppliers"
+                    checked={editVisibleToSuppliers}
+                    onChange={(e) => setEditVisibleToSuppliers(e.target.checked)}
+                    className="rounded border border-input"
+                  />
+                  <Label htmlFor="edit-visible-suppliers" className="text-sm font-normal cursor-pointer">
+                    Make visible to suppliers/contractors
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="edit-visible-policyholders"
+                    checked={editVisibleToPolicyholders}
+                    onChange={(e) => setEditVisibleToPolicyholders(e.target.checked)}
+                    className="rounded border border-input"
+                  />
+                  <Label htmlFor="edit-visible-policyholders" className="text-sm font-normal cursor-pointer">
+                    Make visible to policyholders/customers
+                  </Label>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Internal staff can always access documents
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Textarea
+                value={editNote}
+                onChange={(e) => setEditNote(e.target.value)}
+                placeholder="Add any notes about this document..."
+                rows={3}
+              />
+            </div>
           </div>
           <div className="flex justify-end gap-2 mt-6">
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
@@ -1347,10 +2299,11 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
       </Dialog>
 
       {/* Document Approval Dialog */}
+      {console.log('Dialog render:', { approvalDialogOpen, hasApprovalDocument: !!approvalDocument })}
       <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Review Document</DialogTitle>
+            <DialogTitle>Approve Document</DialogTitle>
             <DialogDescription>
               Review and approve or reject this document
             </DialogDescription>
@@ -1412,6 +2365,65 @@ export default function DocumentsModule({ projectId }: { projectId: string }) {
                 >
                   <CheckCircle className="w-4 h-4 mr-2" />
                   Approve
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Review Dialog */}
+      <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Review Document</DialogTitle>
+            <DialogDescription>
+              Mark this document as reviewed and add any comments
+            </DialogDescription>
+          </DialogHeader>
+          
+          {reviewDocument && (
+            <div className="space-y-4">
+              <div className="border rounded-lg p-3 bg-muted/50">
+                <h4 className="font-medium">{reviewDocument.name}</h4>
+                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                  <span>{reviewDocument.type}</span>
+                  <span>{formatFileSize(reviewDocument.file_size)}</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={cn("text-xs", getReviewStatusColor(reviewDocument.review_status || 'unreviewed'))}>
+                    {getReviewStatusLabel(reviewDocument.review_status || 'unreviewed')}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Review Comments (Optional)</Label>
+                <Textarea
+                  value={reviewComments}
+                  onChange={(e) => setReviewComments(e.target.value)}
+                  placeholder="Add any comments or observations about this document..."
+                  rows={4}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Note: This document is already available to the team. This review is for quality control and audit purposes.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setReviewDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleReviewDocument}
+                  disabled={reviewDocumentMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Mark as Reviewed
                 </Button>
               </div>
             </div>

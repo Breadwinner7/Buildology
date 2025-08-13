@@ -354,7 +354,8 @@ export function useUKInsurancePermissions() {
 }
 
 // Enhanced Projects/Claims page useEffect with sophisticated filtering
-export const enhancedClaimsPageUseEffect = `
+// Removed due to template literal compilation errors
+export const enhancedClaimsPageUseEffect = null; /*
 useEffect(() => {
   const fetchClaims = async () => {
     try {
@@ -392,7 +393,7 @@ useEffect(() => {
       setUserPermissions(permissions);
 
       console.log('👤 User loaded:', {
-        name: \`\${userProfile.first_name} \${userProfile.surname}\`,
+        name: `${userProfile.first_name} ${userProfile.surname}`,
         role: userProfile.role,
         category: category,
         organisation: userProfile.organisation?.name,
@@ -402,12 +403,12 @@ useEffect(() => {
       // Build claims query based on user's role and permissions
       let claimsQuery = supabase
         .from('projects')
-        .select(\`
+        .select(`
           *,
           organisation:organisations(name, type),
           primary_handler:user_profiles!primary_handler_id(first_name, surname, email),
           project_members!inner(role_on_claim, user_id)
-        \`);
+        `);
 
       // Apply filtering based on user category and permissions
       if (category === 'INSURER_STAFF') {
@@ -467,7 +468,7 @@ useEffect(() => {
 
   fetchClaims();
 }, []);
-\`;
+*/
 
 // Sophisticated UI component for role-based navigation
 export const RoleBasedNavigation = ({ userProfile, userCategory, permissions }: any) => {
@@ -618,86 +619,7 @@ export const UserProfileDisplay = ({ userProfile }: any) => {
   };
 };
 
-// Updated minimal frontend for testing the new system
-export const testNewSystemUseEffect = `
-useEffect(() => {
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+// Test code removed - was causing TypeScript compilation errors
 
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        setError('Please log in to view the system');
-        setLoading(false);
-        return;
-      }
-
-      console.log('🔍 Testing new UK insurance system...');
-      console.log('👤 Authenticated user:', user.email);
-
-      // Get enhanced user profile
-      const { data: userProfile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select(\`
-          *,
-          organisation:organisations(*),
-          role_permissions!inner(permission)
-        \`)
-        .eq('email', user.email)
-        .single();
-
-      if (profileError) {
-        console.error('❌ Profile error:', profileError);
-        setError('Profile not found: ' + profileError.message);
-        setLoading(false);
-        return;
-      }
-
-      console.log('✅ Enhanced profile loaded:', {
-        name: \`\${userProfile.first_name} \${userProfile.surname}\`,
-        role: userProfile.role,
-        organisation: userProfile.organisation?.name,
-        permissions: userProfile.role_permissions.length
-      });
-
-      setCurrentUser(userProfile);
-      setIsSuperAdmin(userProfile.role === 'super_admin');
-
-      // Get claims/projects with enhanced query
-      const { data: claimsData, error: claimsError } = await supabase
-        .from('projects')
-        .select(\`
-          claim_reference,
-          claim_title,
-          claim_status,
-          incident_type,
-          incident_date,
-          total_incurred,
-          currency,
-          property_address,
-          organisation:organisations(name),
-          primary_handler:user_profiles!primary_handler_id(first_name, surname)
-        \`)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (claimsError) {
-        console.error('❌ Claims error:', claimsError);
-        setError('Failed to load claims: ' + claimsError.message);
-      } else {
-        console.log('✅ Claims loaded:', claimsData?.length || 0);
-        setProjects(claimsData || []);
-      }
-
-    } catch (error: any) {
-      console.error('💥 System error:', error);
-      setError('System error: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  fetchData();
-}, []);
-`;
+// Export empty object to make this a valid module
+export {};

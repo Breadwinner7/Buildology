@@ -1,0 +1,104 @@
+/* Mobile-specific optimizations */
+
+/* Touch targets should be at least 44px */
+@media (max-width: 640px) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Better spacing on mobile */
+  .mobile-padding {
+    padding: 1rem;
+  }
+
+  /* Responsive text sizing */
+  .mobile-text {
+    font-size: 0.875rem;
+  }
+
+  /* Stack elements vertically on mobile */
+  .mobile-stack {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+  }
+
+  /* Hide complex charts on very small screens */
+  @media (max-width: 480px) {
+    .hide-on-mobile {
+      display: none;
+    }
+  }
+
+  /* Better table responsiveness */
+  .responsive-table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Mobile card adjustments */
+  .mobile-card {
+    border-radius: 0.75rem;
+    padding: 1rem;
+  }
+
+  /* Better form controls on mobile */
+  .mobile-form-control {
+    height: 44px;
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+
+  /* Navigation improvements */
+  .mobile-nav {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Better modal sizing on mobile */
+  .mobile-modal {
+    margin: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+}
+
+/* Tablet-specific optimizations */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .tablet-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .tablet-padding {
+    padding: 1.5rem;
+  }
+}
+
+/* Landscape phone optimizations */
+@media (max-height: 500px) and (orientation: landscape) {
+  .landscape-compact {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+}
+
+/* High DPI displays */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .high-dpi-icon {
+    transform: scale(0.9);
+  }
+}
+
+/* Accessibility improvements for mobile */
+@media (prefers-reduced-motion: reduce) {
+  .mobile-no-animation * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Dark mode mobile adjustments */
+@media (prefers-color-scheme: dark) {
+  .mobile-dark-adjust {
+    background-color: rgb(17 24 39); /* gray-900 */
+  }
+}

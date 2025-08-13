@@ -1,930 +1,637 @@
 'use client'
 
-import { useParams } from 'next/navigation'
-import { useState, useEffect } from 'react'
-import { useProject } from '@/hooks/useProject'
+import { useParams, useRouter } from 'next/navigation'
+import { useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabaseClient'
+import { useUser } from '@/hooks/useUser'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { HoldStatusBanner } from '@/components/features/projects/HoldStatusBanner'
-import ProjectAppointmentsModule from '@/components/features/appointments/ProjectAppointmentsModule'
-import ProjectComplianceModule from '@/components/features/compliance/ProjectComplianceModule'
-import { supabase } from '@/lib/supabaseClient'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Separator } from '@/components/ui/separator'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from 'sonner'
+import { format, formatDistanceToNow, isToday, isTomorrow } from 'date-fns'
+import { cn } from '@/lib/utils'
+import type { Database } from '@/types/database'
 import { 
   Calendar, MapPin, PoundSterling, User, Phone, Mail, Clock,
-  AlertTriangle, Building, TrendingUp, Target, CheckCircle, 
-  FileText, MessageSquare, ClipboardList, Edit2, Save, X, 
-  Shield, Flag, Activity, Users, Plus, Copy, ExternalLink,
-  ChevronRight, Star, AlertCircle, Zap, Camera, Upload,
-  History, Bell, Settings, MoreHorizontal, Trash2
+  AlertTriangle, Building, TrendingUp, CheckCircle, 
+  FileText, MessageSquare, Edit2, X, 
+  Shield, Activity, Users, Plus, ExternalLink,
+  ChevronRight, Star, Zap, Upload,
+  History, MoreHorizontal, Trash2, ArrowLeft,
+  BarChart3, DollarSign, Timer, Archive,
+  Eye, Download, Share, Filter, Search, RefreshCw, ChevronDown,
+  CalendarDays, Hammer, Package, Receipt, Scale,
+  Home, Briefcase, FolderOpen, UserCheck, PlayCircle, PauseCircle,
+  StopCircle, BookOpen, FileImage, Loader2, ClipboardList
 } from 'lucide-react'
+import { ProjectOverviewPanel } from '@/components/features/projects/ProjectOverviewPanel'
 
-// Enhanced vulnerability options with severity levels
-const VULNERABILITY_OPTIONS = [
-  { label: 'Elderly (65+)', severity: 'medium', color: 'amber' },
-  { label: 'Mobility Issues', severity: 'high', color: 'red' },
-  { label: 'Mental Health Conditions', severity: 'high', color: 'red' },
-  { label: 'Chronic Health Issues', severity: 'medium', color: 'amber' },
-  { label: 'Single Parent', severity: 'low', color: 'blue' },
-  { label: 'Language Barrier', severity: 'medium', color: 'amber' },
-  { label: 'Financial Hardship', severity: 'medium', color: 'amber' },
-  { label: 'Learning Disabilities', severity: 'high', color: 'red' },
-  { label: 'Visual/Hearing Impairment', severity: 'high', color: 'red' },
-  { label: 'Recent Bereavement', severity: 'medium', color: 'amber' },
-  { label: 'Social Isolation', severity: 'medium', color: 'amber' },
-  { label: 'Temporary Accommodation', severity: 'low', color: 'blue' }
-]
+// Types
+type Project = Database['public']['Tables']['projects']['Row']
+type Task = Database['public']['Tables']['tasks']['Row']
+type Document = Database['public']['Tables']['documents']['Row']
+type Claim = Database['public']['Tables']['claims']['Row']
+type ProjectMember = Database['public']['Tables']['project_members']['Row'] & {
+  user_profiles: Database['public']['Tables']['user_profiles']['Row']
+}
+type ProjectFinancial = Database['public']['Tables']['project_financials']['Row']
 
-export default function PerfectProjectOverview() {
-  const { id } = useParams()
-  const projectId = id as string
-  const { project: initialProject, loading } = useProject(projectId)
-  
-  // Separate edit states for different sections
-  const [editingSections, setEditingSections] = useState({
-    header: false,
-    contact: false,
-    vulnerability: false
-  })
-  
-  const [project, setProject] = useState(initialProject)
-  const [savingSection, setSavingSection] = useState('')
-  const [projectStats, setProjectStats] = useState({
-    totalTasks: 0,
-    completedTasks: 0,
-    openIssues: 0,
-    documentsCount: 0,
-    messagesCount: 0,
-    milestonesCount: 0,
-    budgetTotal: 0,
-    budgetSpent: 0,
-    completion: 0,
-    teamMembers: 4,
-    lastActivity: '2 hours ago'
-  })
+// Enhanced project interface
+interface EnhancedProject extends Project {
+  project_financials?: ProjectFinancial[]
+  project_members?: ProjectMember[]
+  tasks?: Task[]
+  claims?: Claim[]
+  documents?: Document[]
+  _counts?: {
+    tasks: number
+    completed_tasks: number
+    claims: number
+    documents: number
+    appointments: number
+  }
+}
 
-  useEffect(() => {
-    if (initialProject) {
-      let cleanProject = { ...initialProject }
-      if (cleanProject.vulnerability_flags?.some(flag => flag.length === 1)) {
-        cleanProject.vulnerability_flags = []
+// Status configurations
+const PROJECT_STATUSES = {
+  planning: { label: 'Planning', color: 'bg-blue-500', icon: BookOpen },
+  active: { label: 'Active', color: 'bg-green-500', icon: PlayCircle },
+  on_hold: { label: 'On Hold', color: 'bg-yellow-500', icon: PauseCircle },
+  completed: { label: 'Completed', color: 'bg-emerald-500', icon: CheckCircle },
+  cancelled: { label: 'Cancelled', color: 'bg-red-500', icon: StopCircle },
+  archived: { label: 'Archived', color: 'bg-gray-500', icon: Archive }
+} as const
+
+// Fetch project with details
+const fetchProjectWithDetails = async (projectId: string): Promise<EnhancedProject | null> => {
+  try {
+    // Check authentication first
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      throw new Error('Authentication required')
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        project_financials (*)
+      `)
+      .eq('id', projectId)
+      .single()
+
+    if (error) throw error
+
+    // Fetch project members separately with proper auth context
+    const { data: membersData } = await supabase
+      .from('project_members')
+      .select(`
+        *,
+        user_profiles!project_members_user_id_fkey1 (
+          id,
+          first_name,
+          surname,
+          email,
+          avatar_url,
+          full_name
+        )
+      `)
+      .eq('project_id', projectId)
+
+    // Fetch counts with error handling
+    const [tasksRes, claimsRes, documentsRes, appointmentsRes] = await Promise.allSettled([
+      supabase.from('tasks').select('id, status').eq('project_id', projectId),
+      supabase.from('claims').select('id').eq('project_id', projectId),
+      supabase.from('documents').select('id').eq('project_id', projectId),
+      supabase.from('appointments').select('id').eq('project_id', projectId)
+    ])
+
+    const tasks = tasksRes.status === 'fulfilled' ? (tasksRes.value.data || []) : []
+    const claims = claimsRes.status === 'fulfilled' ? (claimsRes.value.data || []) : []
+    const documents = documentsRes.status === 'fulfilled' ? (documentsRes.value.data || []) : []
+    const appointments = appointmentsRes.status === 'fulfilled' ? (appointmentsRes.value.data || []) : []
+    
+    const completedTasks = tasks.filter(t => t.status === 'completed' || t.status === 'done').length
+
+    return {
+      ...data,
+      project_members: membersData || [],
+      _counts: {
+        tasks: tasks.length,
+        completed_tasks: completedTasks,
+        claims: claims.length,
+        documents: documents.length,
+        appointments: appointments.length
       }
-      setProject(cleanProject)
     }
-  }, [initialProject])
+  } catch (error) {
+    console.error('Error fetching project details:', error)
+    throw error
+  }
+}
 
-  useEffect(() => {
-    if (projectId) {
-      fetchProjectStats()
+// Fetch tasks
+const fetchProjectTasks = async (projectId: string) => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return []
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        *,
+        assigned_user:user_profiles!tasks_assigned_to_fkey (
+          id,
+          first_name,
+          surname,
+          email,
+          avatar_url,
+          full_name
+        )
+      `)
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.warn('Error fetching tasks:', error)
+      return []
     }
-  }, [projectId])
+    return data || []
+  } catch (error) {
+    console.warn('Error in fetchProjectTasks:', error)
+    return []
+  }
+}
 
-  const fetchProjectStats = async () => {
-    try {
-      const [tasksResponse, docsResponse, financialsResponse, milestonesResponse] = await Promise.all([
-        supabase.from('tasks').select('id, status').eq('project_id', projectId),
-        supabase.from('documents').select('id').eq('project_id', projectId),
-        supabase.from('project_financials').select('budget_total, budget_spent').eq('project_id', projectId).single(),
-        supabase.from('project_milestones').select('id, status').eq('project_id', projectId)
-      ])
+// Fetch documents
+const fetchProjectDocuments = async (projectId: string) => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return []
 
-      const tasks = tasksResponse.data || []
-      const completedTasks = tasks.filter(t => t.status === 'done').length
-      const milestones = milestonesResponse.data || []
-      const completedMilestones = milestones.filter(m => m.status === 'completed').length
-      
-      setProjectStats({
-        totalTasks: tasks.length,
-        completedTasks,
-        openIssues: Math.floor(Math.random() * 5),
-        documentsCount: docsResponse.data?.length || 0,
-        messagesCount: Math.floor(Math.random() * 20),
-        milestonesCount: milestones.length,
-        budgetTotal: financialsResponse.data?.budget_total || 0,
-        budgetSpent: financialsResponse.data?.budget_spent || 0,
-        completion: milestones.length > 0 ? Math.round((completedMilestones / milestones.length) * 100) : 0,
-        teamMembers: 4,
-        lastActivity: '2 hours ago'
-      })
-    } catch (error) {
-      console.error('Error fetching project stats:', error)
+    const { data, error } = await supabase
+      .from('documents')
+      .select(`
+        *,
+        uploaded_by_user:user_profiles!documents_user_id_fkey (
+          id,
+          first_name,
+          surname,
+          email,
+          full_name
+        )
+      `)
+      .eq('project_id', projectId)
+      .order('uploaded_at', { ascending: false })
+
+    if (error) {
+      console.warn('Error fetching documents:', error)
+      return []
     }
+    return data || []
+  } catch (error) {
+    console.warn('Error in fetchProjectDocuments:', error)
+    return []
+  }
+}
+
+// Fetch claims
+const fetchProjectClaims = async (projectId: string) => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return []
+
+    const { data, error } = await supabase
+      .from('claims')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.warn('Error fetching claims:', error)
+      return []
+    }
+    return data || []
+  } catch (error) {
+    console.warn('Error in fetchProjectClaims:', error)
+    return []
+  }
+}
+
+export default function ProjectDetailPage() {
+  const { id } = useParams()
+  const router = useRouter()
+  const { user } = useUser()
+  const projectId = id as string
+  
+
+  // Data fetching
+  const { data: project, isLoading, error, refetch } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => fetchProjectWithDetails(projectId),
+    enabled: !!projectId
+  })
+
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['project-tasks', projectId],
+    queryFn: () => fetchProjectTasks(projectId),
+    enabled: !!projectId
+  })
+
+  const { data: documents = [] } = useQuery({
+    queryKey: ['project-documents', projectId],
+    queryFn: () => fetchProjectDocuments(projectId),
+    enabled: !!projectId
+  })
+
+  const { data: claims = [] } = useQuery({
+    queryKey: ['project-claims', projectId],
+    queryFn: () => fetchProjectClaims(projectId),
+    enabled: !!projectId
+  })
+
+  // Computed values
+  const projectStats = useMemo(() => {
+    if (!project) return null
+    
+    const budget = project.project_financials?.[0]
+    const taskCompletion = project._counts?.tasks ? 
+      Math.round((project._counts.completed_tasks / project._counts.tasks) * 100) : 0
+    const budgetProgress = budget?.budget_total ? 
+      Math.round(((budget.budget_spent || 0) / budget.budget_total) * 100) : 0
+
+    return {
+      taskCompletion,
+      budgetProgress,
+      totalBudget: budget?.budget_total || 0,
+      spentBudget: budget?.budget_spent || 0,
+      remainingBudget: (budget?.budget_total || 0) - (budget?.budget_spent || 0),
+      teamSize: project.project_members?.length || 0,
+      ...project._counts
+    }
+  }, [project])
+
+  // Helper functions
+  const getStatusConfig = (status: string) => {
+    return PROJECT_STATUSES[status as keyof typeof PROJECT_STATUSES] || PROJECT_STATUSES.active
   }
 
-  const handleSectionSave = async (section: string) => {
-    setSavingSection(section)
+  const handleStatusUpdate = async (newStatus: string) => {
     try {
-      const updateData: any = {}
-      
-      if (section === 'header') {
-        updateData.name = project.name
-        updateData.description = project.description
-      } else if (section === 'contact') {
-        updateData.contact_name = project.contact_name
-        updateData.contact_phone = project.contact_phone
-        updateData.contact_email = project.contact_email
-        updateData.contact_address = project.contact_address
-      } else if (section === 'vulnerability') {
-        updateData.vulnerability_flags = project.vulnerability_flags?.filter(flag => flag.length > 1) || []
-      }
-
       const { error } = await supabase
         .from('projects')
-        .update(updateData)
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', projectId)
 
       if (error) throw error
-
-      toast.success(`${section} updated successfully`)
-      setEditingSections(prev => ({ ...prev, [section]: false }))
+      await refetch()
+      toast.success('Project status updated')
     } catch (error) {
-      toast.error(`Failed to update ${section}`)
-    } finally {
-      setSavingSection('')
+      toast.error('Failed to update status')
     }
   }
 
-  const toggleVulnerability = (flag: string) => {
-    let current = project.vulnerability_flags || []
-    if (current.length > 20 || current.some(item => item.length === 1)) {
-      current = []
-    }
-    
-    const updated = current.includes(flag)
-      ? current.filter(v => v !== flag)
-      : [...current, flag]
-    setProject({ ...project, vulnerability_flags: updated })
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'works_in_progress': return 'bg-blue-500'
-      case 'works_complete': case 'closed': return 'bg-green-500'
-      case 'on_hold': return 'bg-yellow-500'
-      case 'planning': return 'bg-purple-500'
-      case 'survey_booked': case 'survey_complete': return 'bg-orange-500'
-      default: return 'bg-gray-500'
-    }
-  }
-
-  const formatStatus = (status: string) => {
-    return status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Active'
-  }
-
-  const getVulnerabilityConfig = (label: string) => {
-    return VULNERABILITY_OPTIONS.find(v => v.label === label) || { severity: 'low', color: 'gray' }
-  }
-
-  const priorityTasks = [
-    { id: '1', title: 'Schedule initial survey', due: 'Today', priority: 'high' },
-    { id: '2', title: 'Contact customer for access', due: 'Tomorrow', priority: 'medium' },
-    { id: '3', title: 'Upload damage photos', due: 'This week', priority: 'low' }
-  ]
-
-  if (loading) {
+  // Loading state
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" />
-          <p className="text-muted-foreground">Loading project...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!project) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center space-y-4">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto" />
-          <div>
-            <h2 className="text-xl font-semibold text-red-600">Project not found</h2>
-            <p className="text-muted-foreground">The requested project could not be found.</p>
+      <div className="min-h-screen bg-background p-6">
+        <div className="max-w-screen-2xl mx-auto space-y-8">
+          <Skeleton className="h-12 w-1/3" />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <Card key={i}>
+                <CardContent className="p-6">
+                  <Skeleton className="h-4 w-16 mb-2" />
+                  <Skeleton className="h-8 w-20" />
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </div>
       </div>
     )
   }
 
-  return (
-    <TooltipProvider>
-      <div className="p-6 space-y-6">
-        {/* Enhanced Project Header */}
-        <div className="relative">
-          <Card className="border-l-4 border-l-blue-500 shadow-sm">
-            <CardContent className="pt-6">
-              <div className="flex items-start justify-between">
-                <div className="flex-1 space-y-4">
-                  {/* Project Name & Status */}
-                  <div className="flex items-center gap-4">
-                    {editingSections.header ? (
-                      <div className="flex-1 space-y-3">
-                        <Input
-                          value={project.name}
-                          onChange={(e) => setProject({ ...project, name: e.target.value })}
-                          className="text-2xl font-bold h-auto py-2 px-3 border-2 border-blue-200"
-                          placeholder="Project name"
-                        />
-                        <Textarea
-                          value={project.description || ''}
-                          onChange={(e) => setProject({ ...project, description: e.target.value })}
-                          placeholder="Project description..."
-                          rows={2}
-                          className="resize-none border-2 border-blue-200"
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-3 h-3 rounded-full ${getStatusColor(project.status)}`} />
-                            <Badge variant="outline" className="text-sm">
-                              {formatStatus(project.status)}
-                            </Badge>
-                            {project.on_hold && (
-                              <Badge variant="destructive">ON HOLD</Badge>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-muted-foreground leading-relaxed">
-                          {project.description || 'No description provided'}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-2">
-                      {editingSections.header ? (
-                        <>
-                          <Button 
-                            onClick={() => handleSectionSave('header')} 
-                            disabled={savingSection === 'header'}
-                            size="sm"
-                          >
-                            <Save className="w-4 h-4 mr-2" />
-                            {savingSection === 'header' ? 'Saving...' : 'Save'}
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            onClick={() => setEditingSections(prev => ({ ...prev, header: false }))}
-                            size="sm"
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => setEditingSections(prev => ({ ...prev, header: true }))}
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Edit project details</TooltipContent>
-                          </Tooltip>
-                          
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="outline" size="sm">
-                                <Copy className="w-4 h-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Copy project ID</TooltipContent>
-                          </Tooltip>
-                          
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="outline" size="sm">
-                                <ExternalLink className="w-4 h-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Share project</TooltipContent>
-                          </Tooltip>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Project Meta Info */}
-                  <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4" />
-                      <span>Created {new Date(project.created_at).toLocaleDateString('en-GB')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Activity className="w-4 h-4" />
-                      <span>Last activity {projectStats.lastActivity}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      <span>{projectStats.teamMembers} team members</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+  // Error state
+  if (error || !project) {
+    return (
+      <div className="min-h-screen bg-background p-6">
+        <div className="max-w-screen-2xl mx-auto">
+          <Alert className="border-red-200 bg-red-50">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Failed to load project. Please try refreshing the page.
+            </AlertDescription>
+          </Alert>
         </div>
+      </div>
+    )
+  }
 
-        {/* Hold Status Banner */}
-        <HoldStatusBanner projectId={projectId} />
+  const statusConfig = getStatusConfig(project.status)
+  const StatusIcon = statusConfig.icon
 
-        {/* Enhanced Metrics Dashboard */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Progress Card */}
-          <Card className="relative overflow-hidden">
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <div className="border-b bg-white/50 backdrop-blur-sm sticky top-0 z-40">
+        <div className="max-w-screen-2xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="sm" onClick={() => router.push('/projects')}>
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Projects
+              </Button>
+              <Separator orientation="vertical" className="h-6" />
+              <div className="flex items-center gap-2">
+                <Building className="w-5 h-5 text-primary" />
+                <h1 className="text-2xl font-bold">{project.name}</h1>
+                <Badge variant="outline" className="gap-1">
+                  <StatusIcon className="w-3 h-3" />
+                  {statusConfig.label}
+                </Badge>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh
+              </Button>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <MoreHorizontal className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem>
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Edit Project
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Share className="w-4 h-4 mr-2" />
+                    Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-red-600">
+                    <Archive className="w-4 h-4 mr-2" />
+                    Archive
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-screen-2xl mx-auto p-6 space-y-8">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="border-l-4 border-l-blue-500">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="p-2 bg-blue-100 rounded-lg">
                   <TrendingUp className="w-5 h-5 text-blue-600" />
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {projectStats.completion >= 75 ? 'On Track' : projectStats.completion >= 50 ? 'Warning' : 'Behind'}
+                <Badge variant={projectStats?.taskCompletion >= 75 ? 'default' : 'secondary'}>
+                  {projectStats?.taskCompletion >= 75 ? 'On Track' : 'In Progress'}
                 </Badge>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Overall Progress</p>
-                <p className="text-2xl font-bold mb-2">{projectStats.completion}%</p>
-                <Progress value={projectStats.completion} className="h-2" />
+                <p className="text-sm text-muted-foreground mb-2">Task Progress</p>
+                <p className="text-2xl font-bold mb-2">{projectStats?.taskCompletion || 0}%</p>
+                <Progress value={projectStats?.taskCompletion || 0} className="h-2" />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {projectStats?.completed_tasks || 0} of {projectStats?.tasks || 0} completed
+                </p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Tasks Card */}
-          <Card className="relative">
+          <Card className="border-l-4 border-l-green-500">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="p-2 bg-green-100 rounded-lg">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <DollarSign className="w-5 h-5 text-green-600" />
                 </div>
-                <Button variant="ghost" size="sm" className="h-auto p-1">
-                  <Plus className="w-3 h-3" />
-                </Button>
+                <Badge variant={projectStats?.budgetProgress >= 90 ? 'destructive' : 'default'}>
+                  {projectStats?.budgetProgress || 0}% Used
+                </Badge>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Tasks</p>
-                <p className="text-2xl font-bold">{projectStats.completedTasks}/{projectStats.totalTasks}</p>
-                <p className="text-xs text-muted-foreground">
-                  {projectStats.totalTasks - projectStats.completedTasks} remaining
-                </p>
+                <p className="text-sm text-muted-foreground mb-2">Budget</p>
+                <p className="text-2xl font-bold">£{((projectStats?.totalBudget || 0) / 1000).toFixed(0)}k</p>
+                <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
+                  <span>Spent: £{((projectStats?.spentBudget || 0) / 1000).toFixed(0)}k</span>
+                  <span>Left: £{((projectStats?.remainingBudget || 0) / 1000).toFixed(0)}k</span>
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Issues Card */}
-          <Card className={`relative ${projectStats.openIssues > 0 ? 'border-orange-200 bg-orange-50' : ''}`}>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-2 bg-orange-100 rounded-lg">
-                  <AlertTriangle className="w-5 h-5 text-orange-600" />
-                </div>
-                {projectStats.openIssues > 0 && (
-                  <Badge variant="destructive" className="text-xs">
-                    Urgent
-                  </Badge>
-                )}
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">Open Issues</p>
-                <p className="text-2xl font-bold">{projectStats.openIssues}</p>
-                <p className="text-xs text-muted-foreground">
-                  {projectStats.openIssues > 0 ? 'Needs attention' : 'All clear'}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Budget Card */}
-          <Card className="relative">
+          <Card className="border-l-4 border-l-purple-500">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="p-2 bg-purple-100 rounded-lg">
-                  <PoundSterling className="w-5 h-5 text-purple-600" />
+                  <Users className="w-5 h-5 text-purple-600" />
                 </div>
-                <Button variant="ghost" size="sm" className="h-auto p-1">
-                  <MoreHorizontal className="w-3 h-3" />
+                <Button variant="ghost" size="sm" className="p-0">
+                  <Plus className="w-4 h-4" />
                 </Button>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Budget</p>
-                {projectStats.budgetTotal > 0 ? (
-                  <>
-                    <p className="text-lg font-bold">
-                      £{(projectStats.budgetSpent / 1000).toFixed(0)}k / £{(projectStats.budgetTotal / 1000).toFixed(0)}k
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {((projectStats.budgetSpent / projectStats.budgetTotal) * 100).toFixed(0)}% utilized
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-lg font-bold text-muted-foreground">Not set</p>
-                )}
+                <p className="text-sm text-muted-foreground mb-2">Team Members</p>
+                <p className="text-2xl font-bold">{projectStats?.teamSize || 0}</p>
+                <div className="flex -space-x-2 mt-2">
+                  {project.project_members?.slice(0, 3).map((member, index) => (
+                    <Avatar key={index} className="w-6 h-6 border-2 border-white">
+                      <AvatarImage src={member.user_profiles?.avatar_url} />
+                      <AvatarFallback className="text-xs">
+                        {member.user_profiles?.full_name ? member.user_profiles.full_name.split(' ').map(n => n[0]).join('') : member.user_profiles?.first_name?.[0] + member.user_profiles?.surname?.[0] || '?'}
+                      </AvatarFallback>
+                    </Avatar>
+                  ))}
+                  {(projectStats?.teamSize || 0) > 3 && (
+                    <div className="w-6 h-6 bg-muted rounded-full border-2 border-white flex items-center justify-center text-xs">
+                      +{(projectStats?.teamSize || 0) - 3}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-l-4 border-l-orange-500">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-2 bg-orange-100 rounded-lg">
+                  <FileText className="w-5 h-5 text-orange-600" />
+                </div>
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">Documents</p>
+                <p className="text-2xl font-bold">{projectStats?.documents || 0}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {projectStats?.claims || 0} claims filed
+                </p>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Main Content - Enhanced Layout */}
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          {/* Contact & Details - 3/4 width */}
-          <div className="xl:col-span-3 space-y-6">
-            {/* Contact Information */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <User className="w-5 h-5 text-blue-600" />
-                    <CardTitle>Contact Information</CardTitle>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {editingSections.contact ? (
-                      <>
-                        <Button 
-                          onClick={() => handleSectionSave('contact')} 
-                          disabled={savingSection === 'contact'}
-                          size="sm"
-                        >
-                          <Save className="w-4 h-4 mr-2" />
-                          {savingSection === 'contact' ? 'Saving...' : 'Save'}
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setEditingSections(prev => ({ ...prev, contact: false }))}
-                          size="sm"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </>
-                    ) : (
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => setEditingSections(prev => ({ ...prev, contact: true }))}
-                      >
-                        <Edit2 className="w-4 h-4 mr-2" />
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Contact Details */}
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                        Contact Name
-                      </label>
-                      {editingSections.contact ? (
-                        <Input
-                          value={project.contact_name || ''}
-                          onChange={(e) => setProject({ ...project, contact_name: e.target.value })}
-                          placeholder="Enter contact name"
-                          className="border-2"
-                        />
-                      ) : (
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border">
-                          <Avatar className="h-8 w-8">
-                            <AvatarFallback className="text-xs">
-                              {project.contact_name?.split(' ').map(n => n[0]).join('') || 'NA'}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{project.contact_name || 'Not specified'}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                        Phone Number
-                      </label>
-                      {editingSections.contact ? (
-                        <Input
-                          value={project.contact_phone || ''}
-                          onChange={(e) => setProject({ ...project, contact_phone: e.target.value })}
-                          placeholder="Enter phone number"
-                          className="border-2"
-                        />
-                      ) : project.contact_phone ? (
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border">
-                          <Phone className="w-4 h-4 text-muted-foreground" />
-                          <a href={`tel:${project.contact_phone}`} className="text-blue-600 hover:underline font-medium">
-                            {project.contact_phone}
-                          </a>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border text-muted-foreground">
-                          <Phone className="w-4 h-4" />
-                          <span>Not specified</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                        Email Address
-                      </label>
-                      {editingSections.contact ? (
-                        <Input
-                          value={project.contact_email || ''}
-                          onChange={(e) => setProject({ ...project, contact_email: e.target.value })}
-                          placeholder="Enter email address"
-                          type="email"
-                          className="border-2"
-                        />
-                      ) : project.contact_email ? (
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border">
-                          <Mail className="w-4 h-4 text-muted-foreground" />
-                          <a href={`mailto:${project.contact_email}`} className="text-blue-600 hover:underline font-medium">
-                            {project.contact_email}
-                          </a>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border text-muted-foreground">
-                          <Mail className="w-4 h-4" />
-                          <span>Not specified</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Property Address */}
+        {/* Project Overview - No duplicate tabs, focus on essential information */}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {/* Project Details and Contact Information */}
+            <div className="space-y-6">
+              <ProjectOverviewPanel project={project} />
+            </div>
+            
+            {/* Project Status and Progress */}
+            <div className="space-y-6">
+              {/* Project Progress Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Project Progress</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <div>
-                    <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                      Property Address
-                    </label>
-                    {editingSections.contact ? (
-                      <Textarea
-                        value={project.contact_address || ''}
-                        onChange={(e) => setProject({ ...project, contact_address: e.target.value })}
-                        placeholder="Enter property address"
-                        rows={6}
-                        className="border-2 resize-none"
-                      />
-                    ) : project.contact_address ? (
-                      <div className="p-3 bg-gray-50 rounded-lg border min-h-[120px]">
-                        <div className="flex items-start gap-3">
-                          <MapPin className="w-4 h-4 text-muted-foreground mt-1 flex-shrink-0" />
-                          <div>
-                            <p className="font-medium leading-relaxed">{project.contact_address}</p>
-                            <Button variant="ghost" size="sm" className="p-0 h-auto text-blue-600 mt-2">
-                              <ExternalLink className="w-3 h-3 mr-1" />
-                              View on map
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center p-8 bg-gray-50 rounded-lg border text-muted-foreground min-h-[120px]">
-                        <div className="text-center">
-                          <MapPin className="w-6 h-6 mx-auto mb-2" />
-                          <p className="text-sm">No address specified</p>
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium">Task Completion</span>
+                      <span className="text-sm text-muted-foreground">{projectStats?.taskCompletion || 0}%</span>
+                    </div>
+                    <Progress value={projectStats?.taskCompletion || 0} className="h-2" />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {projectStats?.completed_tasks || 0} of {projectStats?.tasks || 0} tasks completed
+                    </p>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                  
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium">Budget Used</span>
+                      <span className="text-sm text-muted-foreground">{projectStats?.budgetProgress || 0}%</span>
+                    </div>
+                    <Progress value={projectStats?.budgetProgress || 0} className="h-2" />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      £{((projectStats?.spentBudget || 0) / 1000).toFixed(0)}k of £{((projectStats?.totalBudget || 0) / 1000).toFixed(0)}k used
+                    </p>
+                  </div>
 
-            {/* Enhanced Vulnerability Assessment */}
-            <Card className="border-l-4 border-l-amber-500">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-amber-600" />
-                    <div>
-                      <CardTitle>Vulnerability Assessment</CardTitle>
-                      <CardDescription className="mt-1">
-                        Identify customer vulnerabilities for compliance and appropriate care
-                      </CardDescription>
+                  <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold">{projectStats?.teamSize || 0}</p>
+                      <p className="text-sm text-muted-foreground">Team Members</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold">{projectStats?.documents || 0}</p>
+                      <p className="text-sm text-muted-foreground">Documents</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {project.vulnerability_flags?.filter(f => f.length > 1).length > 0 && (
-                      <Badge variant="secondary" className="bg-amber-100 text-amber-800">
-                        {project.vulnerability_flags.filter(f => f.length > 1).length} flag{project.vulnerability_flags.filter(f => f.length > 1).length !== 1 ? 's' : ''}
+                </CardContent>
+              </Card>
+
+              {/* Current Status Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Current Status</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Status</span>
+                      <Badge variant="outline" className={`capitalize ${getStatusConfig(project.status).color.replace('bg-', 'border-')}`}>
+                        {getStatusConfig(project.status).label}
                       </Badge>
+                    </div>
+                    
+                    {project.current_stage && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Current Stage</span>
+                        <span className="text-sm text-muted-foreground">{project.current_stage}</span>
+                      </div>
                     )}
-                    {editingSections.vulnerability ? (
-                      <>
-                        <Button 
-                          onClick={() => handleSectionSave('vulnerability')} 
-                          disabled={savingSection === 'vulnerability'}
-                          size="sm"
-                        >
-                          <Save className="w-4 h-4 mr-2" />
-                          {savingSection === 'vulnerability' ? 'Saving...' : 'Save'}
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setEditingSections(prev => ({ ...prev, vulnerability: false }))}
-                          size="sm"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </>
-                    ) : (
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => setEditingSections(prev => ({ ...prev, vulnerability: true }))}
-                      >
-                        <Edit2 className="w-4 h-4 mr-2" />
-                        Assess
-                      </Button>
-                    )}
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Last Updated</span>
+                      <span className="text-sm text-muted-foreground">
+                        {project.updated_at 
+                          ? formatDistanceToNow(new Date(project.updated_at), { addSuffix: true })
+                          : 'Never'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Created</span>
+                      <span className="text-sm text-muted-foreground">
+                        {format(new Date(project.created_at), 'MMM d, yyyy')}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {editingSections.vulnerability ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {VULNERABILITY_OPTIONS.map(({ label, severity, color }) => {
-                        const isSelected = project.vulnerability_flags?.includes(label)
+                </CardContent>
+              </Card>
+
+              {/* Quick Actions Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-yellow-600" />
+                    Quick Actions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button className="w-full justify-start" size="sm">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Task
+                  </Button>
+                  <Button variant="outline" className="w-full justify-start" size="sm">
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Document
+                  </Button>
+                  <Button variant="outline" className="w-full justify-start" size="sm">
+                    <CalendarDays className="w-4 h-4 mr-2" />
+                    Schedule Meeting
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="w-full justify-between" size="sm">
+                        Change Status
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-full">
+                      {Object.entries(PROJECT_STATUSES).map(([key, config]) => {
+                        const Icon = config.icon
                         return (
-                          <div
-                            key={label}
-                            onClick={() => toggleVulnerability(label)}
-                            className={`
-                              cursor-pointer p-4 rounded-lg border-2 transition-all
-                              ${isSelected 
-                                ? (color === 'red' ? 'border-red-300 bg-red-50' :
-                                   color === 'amber' ? 'border-amber-300 bg-amber-50' :
-                                   'border-blue-300 bg-blue-50')
-                                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                              }
-                            `}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
-                                  isSelected ? (
-                                    color === 'red' ? 'bg-red-500 border-red-500' :
-                                    color === 'amber' ? 'bg-amber-500 border-amber-500' :
-                                    'bg-blue-500 border-blue-500'
-                                  ) : 'border-gray-300'
-                                }`}>
-                                  {isSelected && <CheckCircle className="w-3 h-3 text-white" />}
-                                </div>
-                                <span className="font-medium">{label}</span>
-                              </div>
-                              <Badge 
-                                variant="outline" 
-                                className={`text-xs ${
-                                  severity === 'high' ? 'border-red-200 text-red-700' :
-                                  severity === 'medium' ? 'border-amber-200 text-amber-700' :
-                                  'border-blue-200 text-blue-700'
-                                }`}
-                              >
-                                {severity}
-                              </Badge>
-                            </div>
-                          </div>
+                          <DropdownMenuItem key={key} onClick={() => handleStatusUpdate(key)}>
+                            <Icon className="w-4 h-4 mr-2" />
+                            {config.label}
+                          </DropdownMenuItem>
                         )
                       })}
-                    </div>
-                    <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                      <div className="flex gap-2">
-                        <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                        <div className="text-sm">
-                          <p className="font-medium text-amber-800">Assessment Guidelines</p>
-                          <p className="text-amber-700 mt-1">
-                            Select all applicable vulnerabilities. High-severity flags require additional care protocols and documentation.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    {project.vulnerability_flags?.filter(flag => flag.length > 1).length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2">
-                          {project.vulnerability_flags
-                            .filter(flag => flag.length > 1)
-                            .map(flag => {
-                              const config = getVulnerabilityConfig(flag)
-                              return (
-                                <Badge 
-                                  key={flag} 
-                                  variant="secondary" 
-                                  className={`
-                                    ${config.severity === 'high' ? 'bg-red-100 text-red-800 border-red-200' :
-                                      config.severity === 'medium' ? 'bg-amber-100 text-amber-800 border-amber-200' :
-                                      'bg-blue-100 text-blue-800 border-blue-200'
-                                    } px-3 py-1
-                                  `}
-                                >
-                                  {flag}
-                                  <span className="ml-2 text-xs opacity-75">
-                                    {config.severity}
-                                  </span>
-                                </Badge>
-                              )
-                            })}
-                        </div>
-                        
-                        {/* High severity warning */}
-                        {project.vulnerability_flags?.some(flag => 
-                          getVulnerabilityConfig(flag).severity === 'high'
-                        ) && (
-                          <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                            <div className="flex gap-2">
-                              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
-                              <div className="text-sm">
-                                <p className="font-medium text-red-800">High Priority Vulnerabilities Identified</p>
-                                <p className="text-red-700 mt-1">
-                                  This customer requires enhanced care protocols. Ensure all team members are aware.
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-6 text-muted-foreground">
-                        <Shield className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                        <p className="font-medium">No vulnerabilities assessed</p>
-                        <p className="text-sm mt-1">Click "Assess" to identify customer vulnerabilities for appropriate care</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Appointments Section */}
-            <ProjectAppointmentsModule projectId={projectId} />
-
-            {/* Compliance & Risk Section */}
-            <ProjectComplianceModule projectId={projectId} />
-          </div>
-
-          {/* Enhanced Sidebar - 1/4 width */}
-          <div className="space-y-6">
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-blue-600" />
-                  Quick Actions
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Button className="w-full justify-start" size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create Task
-                </Button>
-                <Button variant="outline" className="w-full justify-start" size="sm">
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload Documents
-                </Button>
-                <Button variant="outline" className="w-full justify-start" size="sm">
-                  <Camera className="w-4 h-4 mr-2" />
-                  Add Photos
-                </Button>
-                <Button variant="outline" className="w-full justify-start" size="sm">
-                  <MessageSquare className="w-4 h-4 mr-2" />
-                  Send Message
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Priority Tasks */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <Star className="w-5 h-5 text-orange-600" />
-                    Priority Tasks
-                  </CardTitle>
-                  <Button variant="ghost" size="sm">
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {priorityTasks.map(task => (
-                  <div key={task.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors">
-                    <div className={`w-2 h-8 rounded-full ${
-                      task.priority === 'high' ? 'bg-red-500' :
-                      task.priority === 'medium' ? 'bg-amber-500' :
-                      'bg-blue-500'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{task.title}</p>
-                      <p className="text-xs text-muted-foreground">{task.due}</p>
-                    </div>
-                    <Button variant="ghost" size="sm" className="h-auto p-1">
-                      <ChevronRight className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Team Members */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="w-5 h-5 text-green-600" />
-                  Team Members
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="text-xs bg-blue-100 text-blue-700">JS</AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">John Smith</p>
-                    <p className="text-xs text-muted-foreground">Project Manager</p>
-                  </div>
-                  <div className="w-2 h-2 bg-green-500 rounded-full" title="Online" />
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="text-xs bg-purple-100 text-purple-700">SJ</AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Sarah Jones</p>
-                    <p className="text-xs text-muted-foreground">Surveyor</p>
-                  </div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full" title="Offline" />
-                </div>
-                
-                <Button variant="outline" size="sm" className="w-full mt-3">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Member
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Project Activity Feed */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <History className="w-5 h-5 text-gray-600" />
-                  Recent Activity
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium">John Smith</span> updated project status
-                      </p>
-                      <p className="text-xs text-muted-foreground">2 hours ago</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium">Sarah Jones</span> completed survey task
-                      </p>
-                      <p className="text-xs text-muted-foreground">1 day ago</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-orange-500 rounded-full mt-2 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        Document uploaded: <span className="font-medium">Survey Report</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">2 days ago</p>
-                    </div>
-                  </div>
-                </div>
-                
-                <Button variant="ghost" size="sm" className="w-full text-blue-600">
-                  View All Activity
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </CardContent>
-            </Card>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
+
       </div>
-    </TooltipProvider>
+    </div>
   )
 }

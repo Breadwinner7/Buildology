@@ -173,6 +173,14 @@ const fetchProjectQuotes = async (projectId: string): Promise<Quote[]> => {
   return data || []
 }
 
+const formatDate = (dateString: string) => {
+  return new Date(dateString).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  })
+}
+
 
 // Financial Metric Card Component
 interface FinancialMetricCardProps {

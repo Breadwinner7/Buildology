@@ -25,7 +25,18 @@
       "Bash(npm run lint:*)",
       "Bash(pkill:*)",
       "Bash(npx next dev:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(for url in \"/\" \"/projects\" \"/dashboard\" \"/tasks\" \"/messages\" \"/settings\")",
+      "Bash(do echo \"Testing $url:\")",
+      "Bash(done)",
+      "Bash(npm cache clean:*)",
+      "Bash(tasklist)",
+      "Bash(npm outdated)",
+      "Bash(time npm run build --silent)",
+      "Bash(taskkill:*)",
+      "Bash(mkdir:*)",
+      "Bash(node:*)",
+      "Bash(echo $NEXT_PUBLIC_SUPABASE_URL)"
     ],
     "deny": []
   }

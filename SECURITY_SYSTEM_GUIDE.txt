@@ -1,0 +1,705 @@
+================================================================================
+                    BUILDOLOGY SECURITY SYSTEM IMPLEMENTATION GUIDE
+================================================================================
+
+This guide covers all security systems implemented in Phase 5: Security & Compliance.
+Each system is production-ready with enterprise-grade features.
+
+================================================================================
+1. ADVANCED AUTHENTICATION SECURITY
+================================================================================
+
+File: src/lib/security/auth-security.ts
+
+FEATURES:
+- TOTP-based Two-Factor Authentication (2FA)
+- Risk-based authentication scoring
+- Brute force protection with account lockouts
+- Device fingerprinting and suspicious activity detection
+- Session management with security attributes
+
+HOW TO USE:
+
+// Enable 2FA for a user
+import { setupTOTP, verifyTOTP } from '@/lib/security/mfa'
+
+const mfaSetup = await setupTOTP('user123', 'user@example.com')
+// Returns: { secret, qrCodeUrl, backupCodes, manualEntryKey }
+
+// Verify TOTP code
+const isValid = await verifyTOTP('user123', '123456')
+
+// Secure login with risk assessment
+import { secureLogin } from '@/lib/security/auth-security'
+
+const loginResult = await secureLogin('user@example.com', 'password')
+// Returns: { success, user, requiresMFA, sessionId, riskScore }
+
+RISK SCORING:
+- Low Risk (0-30): Normal login flow
+- Medium Risk (31-60): Additional verification required
+- High Risk (61-100): MFA required + manual review
+
+AUTOMATIC PROTECTIONS:
+- Account lockout after 5 failed attempts
+- IP-based rate limiting
+- Device fingerprinting for anomaly detection
+- Session timeout based on risk level
+
+================================================================================
+2. DATA ENCRYPTION SYSTEM
+================================================================================
+
+File: src/lib/security/encryption.ts
+
+FEATURES:
+- AES-GCM encryption with automatic key rotation
+- Separate keys for different data types
+- Performance optimization with caching
+- Key versioning and management
+
+HOW TO USE:
+
+import { encryptSensitiveData, decryptSensitiveData } from '@/lib/security/encryption'
+
+// Encrypt PII data
+const encrypted = await encryptSensitiveData(
+  'John Doe', 
+  'pii', 
+  'user123'
+)
+// Returns: { encryptedData, keyId, algorithm, metadata }
+
+// Decrypt data
+const decrypted = await decryptSensitiveData(
+  encrypted.encryptedData,
+  'pii',
+  encrypted.keyId
+)
+
+DATA TYPES SUPPORTED:
+- PII: Personal Identifiable Information
+- financial: Financial data (credit cards, bank info)
+- health: Health records and medical data
+- backup: Backup data encryption
+- system: System configuration data
+
+KEY ROTATION:
+- Automatic rotation every 90 days
+- Manual rotation on security events
+- Versioned keys for backward compatibility
+- Secure key storage with access logging
+
+================================================================================
+3. ROLE-BASED ACCESS CONTROL (RBAC)
+================================================================================
+
+File: src/lib/security/rbac.ts
+
+FEATURES:
+- 9 hierarchical roles with inheritance
+- 20+ granular permissions
+- Context-aware access control
+- Resource-level permissions
+
+ROLES (lowest to highest):
+1. guest - View public content only
+2. user - Basic authenticated user
+3. client - Customer with project access
+4. contractor - External service provider
+5. employee - Internal staff member
+6. manager - Department management
+7. admin - System administration
+8. security_admin - Security oversight
+9. system_admin - Full system access
+
+KEY PERMISSIONS:
+- projects.read, projects.write, projects.delete
+- claims.process, claims.approve, claims.audit
+- users.manage, users.impersonate
+- reports.generate, reports.export
+- system.configure, system.backup
+- security.monitor, security.incident
+
+HOW TO USE:
+
+import { hasPermission, getUserRole } from '@/lib/security/rbac'
+
+// Check user permission
+const canAccess = hasPermission(
+  userRole, 
+  'projects.write', 
+  { projectId: 'proj123', department: 'claims' }
+)
+
+// Get user's effective role
+const role = getUserRole('user123')
+
+CONTEXT-AWARE ACCESS:
+- Department-based restrictions
+- Project-specific permissions
+- Time-based access controls
+- Geographic restrictions
+
+================================================================================
+4. INPUT VALIDATION & SANITIZATION
+================================================================================
+
+File: src/lib/security/input-validation.ts
+
+FEATURES:
+- Detection of SQL injection, XSS, command injection
+- 15+ input types with specific validation rules
+- DOMPurify integration for HTML sanitization
+- Risk scoring for suspicious inputs
+
+SECURITY PATTERNS DETECTED:
+- SQL Injection: SELECT, UNION, OR 1=1, etc.
+- XSS: <script>, javascript:, on* events
+- Command Injection: ;, |, &&, system commands
+- Path Traversal: ../, /etc/, /windows/
+- LDAP Injection: (), *, ||, &&
+
+INPUT TYPES SUPPORTED:
+- EMAIL, PHONE, NAME, ADDRESS, SSN
+- CURRENCY, DATE, URL, HTML, JSON
+- CREDIT_CARD, ROUTING_NUMBER, FILENAME
+- FREE_TEXT (with full sanitization)
+
+HOW TO USE:
+
+import { validateInput, validateFields } from '@/lib/security/input-validation'
+
+// Validate single input
+const result = validateInput(
+  userInput, 
+  InputType.EMAIL, 
+  { userId: 'user123', required: true }
+)
+// Returns: { isValid, sanitizedValue, errors, warnings, riskScore }
+
+// Validate multiple fields
+const schema = {
+  email: { type: InputType.EMAIL, required: true },
+  phone: { type: InputType.PHONE, required: false },
+  name: { type: InputType.NAME, required: true }
+}
+
+const validation = validateFields(formData, schema, { userId: 'user123' })
+// Returns: { isValid, results, sanitizedData, overallRiskScore }
+
+AUTOMATIC PROTECTIONS:
+- Blocks malicious input patterns
+- Logs security incidents for high-risk inputs
+- Sanitizes HTML to prevent XSS
+- Validates business logic (credit card checksums, etc.)
+
+================================================================================
+5. VULNERABILITY SCANNER
+================================================================================
+
+File: src/lib/security/vulnerability-scanner.ts
+
+FEATURES:
+- 8 vulnerability categories
+- CVSS scoring integration
+- CWE (Common Weakness Enumeration) mapping
+- Automated remediation recommendations
+
+VULNERABILITY TYPES:
+- AUTHENTICATION: Weak session management, password policies
+- AUTHORIZATION: Broken access control, privilege escalation
+- DATA_EXPOSURE: Unencrypted sensitive data
+- INJECTION: SQL, XSS, command injection
+- CRYPTOGRAPHY: Weak algorithms, poor key management
+- CONFIGURATION: Security misconfigurations
+- BUSINESS_LOGIC: Workflow manipulation flaws
+- DENIAL_OF_SERVICE: Resource exhaustion attacks
+
+HOW TO USE:
+
+import { performSecurityScan, quickSecurityCheck } from '@/lib/security/vulnerability-scanner'
+
+// Full security scan
+const scanConfig = {
+  enabledChecks: [VulnerabilityType.AUTHENTICATION, VulnerabilityType.INJECTION],
+  depth: 'thorough',
+  includeInformational: true
+}
+
+const scanResult = await performSecurityScan(scanConfig)
+// Returns: { scanId, findings, summary, riskScore, status }
+
+// Quick health check
+const healthCheck = await quickSecurityCheck()
+// Returns: { overallHealth, criticalIssues, recommendedActions, riskScore }
+
+SCAN RESULTS:
+- Critical: Immediate action required (CVSS 9.0-10.0)
+- High: Fix within 24 hours (CVSS 7.0-8.9)
+- Medium: Fix within 1 week (CVSS 4.0-6.9)
+- Low: Fix within 1 month (CVSS 0.1-3.9)
+- Informational: For awareness only
+
+================================================================================
+6. COMPLIANCE REPORTING
+================================================================================
+
+File: src/lib/compliance/reporting.ts
+
+FEATURES:
+- Multi-framework support (SOC2, GDPR, ISO 27001, HIPAA, PCI DSS)
+- 8 report types with 5 export formats
+- Automated compliance scoring
+- Privacy Impact Assessment (PIA) generation
+
+SUPPORTED FRAMEWORKS:
+- SOC2: Service Organization Control 2
+- GDPR: General Data Protection Regulation
+- HIPAA: Health Insurance Portability and Accountability Act
+- PCI DSS: Payment Card Industry Data Security Standard
+- ISO 27001: Information Security Management
+- NIST: National Institute of Standards and Technology
+- FCA: Financial Conduct Authority
+
+REPORT TYPES:
+- AUDIT_TRAIL: Complete audit log export
+- SECURITY_ASSESSMENT: Vulnerability and control assessment
+- DATA_PRIVACY: GDPR compliance and data handling
+- ACCESS_REVIEW: User access and permission analysis
+- INCIDENT_SUMMARY: Security incident reports
+- COMPLIANCE_STATUS: Framework compliance overview
+- RISK_ASSESSMENT: Risk analysis and mitigation
+- USER_ACTIVITY: User behavior and access patterns
+
+HOW TO USE:
+
+import { generateComplianceReport } from '@/lib/compliance/reporting'
+
+const reportConfig = {
+  type: ReportType.SECURITY_ASSESSMENT,
+  framework: ComplianceFramework.SOC2,
+  dateRange: { start: new Date('2024-01-01'), end: new Date('2024-12-31') },
+  format: ExportFormat.PDF,
+  includeDetails: true
+}
+
+const report = await generateComplianceReport(reportConfig, 'admin123')
+// Returns: { id, summary, sections, complianceScore, status, recommendations }
+
+EXPORT FORMATS:
+- PDF: Executive summary and detailed findings
+- CSV: Data for analysis and trending
+- JSON: Machine-readable for integrations
+- XML: Structured data exchange
+- EXCEL: Spreadsheet format with charts
+
+COMPLIANCE SCORING:
+- 90-100: Compliant (green)
+- 70-89: Review Required (yellow)
+- Below 70: Non-Compliant (red)
+
+================================================================================
+7. GDPR DATA PRIVACY CONTROLS
+================================================================================
+
+File: src/lib/privacy/gdpr-controls.ts
+
+FEATURES:
+- All 7 GDPR data subject rights implementation
+- Consent management with legal basis tracking
+- Data retention policies with automatic cleanup
+- Privacy by design architecture
+
+DATA SUBJECT RIGHTS (Articles 15-22):
+1. ACCESS (Article 15): Right to access personal data
+2. RECTIFICATION (Article 16): Right to correct inaccurate data
+3. ERASURE (Article 17): Right to be forgotten
+4. RESTRICT (Article 18): Right to restrict processing
+5. PORTABILITY (Article 20): Right to data portability
+6. OBJECT (Article 21): Right to object to processing
+7. AUTOMATED_DECISION (Article 22): Rights related to automated decisions
+
+LEGAL BASIS FOR PROCESSING (Article 6):
+- CONSENT: User has given explicit consent
+- CONTRACT: Processing necessary for contract performance
+- LEGAL_OBLIGATION: Required by law
+- VITAL_INTERESTS: Protecting life or health
+- PUBLIC_TASK: Performing official functions
+- LEGITIMATE_INTERESTS: Legitimate business interests
+
+HOW TO USE:
+
+import { 
+  recordConsent, 
+  handleAccessRequest, 
+  handleErasureRequest 
+} from '@/lib/privacy/gdpr-controls'
+
+// Record user consent
+const consent = await recordConsent(
+  'user123',
+  ['marketing', 'analytics'],
+  [DataCategory.CONTACT, DataCategory.BEHAVIORAL],
+  'explicit',
+  '192.168.1.1',
+  'Mozilla/5.0...'
+)
+
+// Handle access request (Article 15)
+const accessRequest = await handleAccessRequest(
+  'user123',
+  'user@example.com',
+  true // identity verified
+)
+// Returns complete data export
+
+// Handle erasure request (Article 17)
+const erasureRequest = await handleErasureRequest(
+  'user123',
+  'user@example.com',
+  'User requested account deletion',
+  true
+)
+
+DATA CATEGORIES:
+- IDENTITY: Name, address, ID numbers
+- CONTACT: Email, phone, postal address
+- FINANCIAL: Bank details, payment info
+- TECHNICAL: IP addresses, device info, cookies
+- BEHAVIORAL: Usage patterns, preferences
+- SENSITIVE: Health, political, biometric data
+- LOCATION: GPS, geolocation data
+- COMMUNICATION: Messages, calls, emails
+
+AUTOMATIC PROCESSES:
+- Daily data retention cleanup
+- Weekly consent review (2-year expiration)
+- Automatic erasure scheduling
+- Privacy impact assessments
+
+================================================================================
+8. SECURITY INCIDENT RESPONSE
+================================================================================
+
+File: src/lib/security/incident-response.ts
+
+FEATURES:
+- NIST SP 800-61 compliant incident handling
+- 4 severity levels, 10 categories, 8 status workflow states
+- Automated detection from security events
+- Evidence collection with chain of custody
+
+INCIDENT SEVERITIES (NIST SP 800-61):
+- LOW: Minimal impact, no data loss
+- MEDIUM: Moderate impact, limited data exposure
+- HIGH: Significant impact, data breach potential
+- CRITICAL: Severe impact, active data breach
+
+INCIDENT CATEGORIES:
+- MALWARE: Virus, trojan, ransomware
+- PHISHING: Email and social engineering attacks
+- DATA_BREACH: Unauthorized data access/exposure
+- UNAUTHORIZED_ACCESS: Account compromise
+- DENIAL_OF_SERVICE: Service availability attacks
+- INSIDER_THREAT: Malicious insider activity
+- SYSTEM_COMPROMISE: Server/network compromise
+- CONFIGURATION_ERROR: Security misconfigurations
+- THIRD_PARTY_BREACH: Vendor/supplier incidents
+- REGULATORY_VIOLATION: Compliance violations
+
+STATUS WORKFLOW:
+1. DETECTED: Incident identified
+2. TRIAGED: Initial assessment complete
+3. INVESTIGATING: Active investigation
+4. CONTAINING: Threat containment in progress
+5. ERADICATING: Removing threat
+6. RECOVERING: System recovery
+7. CLOSED: Incident resolved
+8. ESCALATED: Escalated to authorities
+
+HOW TO USE:
+
+import { createSecurityIncident, autoDetectIncident } from '@/lib/security/incident-response'
+
+// Create incident manually
+const incident = await createSecurityIncident(
+  'Unauthorized Database Access',
+  IncidentCategory.UNAUTHORIZED_ACCESS,
+  IncidentSeverity.HIGH,
+  'Multiple failed login attempts from suspicious IP',
+  'manual',
+  ['database_server'],
+  ['user123']
+)
+
+// Automatic detection from events
+const autoIncident = await autoDetectIncident(
+  'auth_failure',
+  { attempts: 15, ipAddress: '192.168.1.100' },
+  'user123'
+)
+
+RESPONSE PLAYBOOKS:
+- Pre-defined response procedures for each incident type
+- Escalation criteria and timelines
+- Communication plans and stakeholder notifications
+- Recovery steps and validation procedures
+
+EVIDENCE COLLECTION:
+- Log files with integrity hashing
+- Screenshots and network captures
+- Chain of custody tracking
+- Forensic analysis capabilities
+
+REGULATORY NOTIFICATIONS:
+- GDPR Article 33: 72-hour notification to authorities
+- GDPR Article 34: Individual notifications for high-risk breaches
+- Financial services: Immediate notification requirements
+- Automated notification workflows
+
+================================================================================
+9. BACKUP & DISASTER RECOVERY
+================================================================================
+
+File: src/lib/backup/disaster-recovery.ts
+
+FEATURES:
+- 4 backup types with automated scheduling
+- Multiple storage targets with encryption
+- Comprehensive disaster recovery plans
+- Recovery testing and validation
+
+BACKUP TYPES:
+- FULL: Complete system backup (daily/weekly)
+- INCREMENTAL: Changes since last backup (hourly/daily)
+- DIFFERENTIAL: Changes since last full backup (daily)
+- TRANSACTION_LOG: Database transaction logs (continuous)
+
+BACKUP SCHEDULES:
+- HOURLY: Critical data (transactions, user data)
+- DAILY: Full system backup
+- WEEKLY: Long-term incremental
+- MONTHLY: Archive and compliance
+
+STORAGE TARGETS:
+- LOCAL: On-site storage for quick recovery
+- CLOUD: AWS S3, Azure Blob, Google Cloud
+- OFFSITE: Geographic distribution for disaster protection
+
+RECOVERY OBJECTIVES:
+- RTO (Recovery Time Objective): 4 hours maximum downtime
+- RPO (Recovery Point Objective): 1 hour maximum data loss
+- Maximum Downtime: 8 hours for complete disaster
+- Data Loss Threshold: 2 hours acceptable loss
+
+HOW TO USE:
+
+import { 
+  performBackup, 
+  restoreFromBackup, 
+  executeRecoveryPlan 
+} from '@/lib/backup/disaster-recovery'
+
+// Perform manual backup
+const backupResult = await performBackup('critical_hourly')
+// Returns: { id, status, size, location, checksum, verified }
+
+// Restore from backup
+const restoreResult = await restoreFromBackup(
+  'backup_123456789_abc',
+  {
+    targetLocation: '/restore/location/',
+    pointInTime: new Date('2024-01-01T12:00:00Z'),
+    verifyBeforeRestore: true
+  }
+)
+
+// Execute disaster recovery plan
+const recoveryResult = await executeRecoveryPlan(
+  'database_corruption',
+  { severity: 'high', affectedSystems: ['database'] }
+)
+
+DISASTER RECOVERY PLANS:
+1. Database Corruption Recovery
+   - Assess damage and stop services
+   - Restore from verified backup
+   - Apply transaction logs
+   - Verify integrity and restart
+
+2. Ransomware Attack Recovery
+   - Isolate infected systems
+   - Activate incident response
+   - Restore from clean backups
+   - Verify system integrity
+
+3. Natural Disaster Recovery
+   - Activate offsite systems
+   - Restore critical services
+   - Redirect user traffic
+   - Coordinate with emergency services
+
+BACKUP SECURITY:
+- AES-256 encryption for all backups
+- Compression to reduce storage costs
+- Checksum verification for integrity
+- Multi-target redundancy
+
+TESTING & VALIDATION:
+- Quarterly disaster recovery tests
+- RTO/RPO objective validation
+- Test result tracking and improvement
+- Automated compliance reporting
+
+================================================================================
+INTEGRATION EXAMPLES
+================================================================================
+
+REACT COMPONENT USAGE:
+
+```typescript
+// Authentication with 2FA
+import { useAuthSecurity } from '@/lib/security/auth-security'
+
+function LoginForm() {
+  const { secureLogin, setupTOTP } = useAuthSecurity()
+  
+  const handleLogin = async (email, password) => {
+    const result = await secureLogin(email, password)
+    if (result.requiresMFA) {
+      // Show 2FA input
+    }
+  }
+}
+
+// Input validation
+import { useInputValidation } from '@/lib/security/input-validation'
+
+function UserForm() {
+  const { validateFields } = useInputValidation()
+  
+  const handleSubmit = (formData) => {
+    const validation = validateFields(formData, {
+      email: { type: InputType.EMAIL, required: true },
+      ssn: { type: InputType.SSN, required: true }
+    })
+    
+    if (!validation.isValid) {
+      // Show errors
+    }
+  }
+}
+
+// Compliance reporting
+import { useComplianceReporting } from '@/lib/compliance/reporting'
+
+function ComplianceDashboard() {
+  const { generateReport } = useComplianceReporting()
+  
+  const generateSOC2Report = async () => {
+    const report = await generateReport({
+      type: ReportType.SECURITY_ASSESSMENT,
+      framework: ComplianceFramework.SOC2,
+      dateRange: { start: startDate, end: endDate },
+      format: ExportFormat.PDF
+    }, currentUser.id)
+  }
+}
+```
+
+================================================================================
+MONITORING & ALERTING
+================================================================================
+
+All security systems integrate with the monitoring infrastructure:
+
+REAL-TIME ALERTS:
+- Critical security incidents (immediate notification)
+- Failed authentication attempts (threshold-based)
+- Data breach detection (automated response)
+- Compliance violations (escalation workflows)
+
+METRICS COLLECTED:
+- Authentication success/failure rates
+- Security scan results and trends
+- Backup success rates and performance
+- Incident response times
+- Compliance scores over time
+
+DASHBOARDS:
+- Security overview with risk scoring
+- Compliance status across frameworks
+- Backup and recovery health
+- Incident response metrics
+
+LOG AGGREGATION:
+- Centralized security event logging
+- Audit trail for compliance
+- Performance metrics and trends
+- User activity and access patterns
+
+================================================================================
+MAINTENANCE & UPDATES
+================================================================================
+
+REGULAR TASKS:
+- Weekly vulnerability scans
+- Monthly compliance report generation
+- Quarterly disaster recovery testing
+- Annual security framework review
+
+AUTOMATIC UPDATES:
+- Security pattern database updates
+- Vulnerability signature updates
+- Compliance framework changes
+- Backup retention policy enforcement
+
+PERFORMANCE OPTIMIZATION:
+- Encryption key rotation (90 days)
+- Cache optimization for validation
+- Database cleanup for old records
+- Storage optimization for backups
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+COMMON ISSUES:
+
+1. Authentication Problems
+   - Check 2FA synchronization
+   - Verify risk scoring thresholds
+   - Review account lockout policies
+
+2. Validation Errors
+   - Check input pattern definitions
+   - Verify security pattern updates
+   - Review false positive rates
+
+3. Backup Failures
+   - Check storage target availability
+   - Verify encryption key access
+   - Review retention policy conflicts
+
+4. Compliance Issues
+   - Update framework requirements
+   - Review control implementation
+   - Check audit trail completeness
+
+LOGGING LOCATIONS:
+- Security events: /logs/security/
+- Audit trails: /logs/audit/
+- Backup logs: /logs/backup/
+- Compliance reports: /reports/compliance/
+
+================================================================================
+
+This security system provides enterprise-grade protection suitable for regulated
+industries including financial services, healthcare, and government contractors.
+All implementations follow industry best practices and compliance standards.
+
+For technical support, refer to the individual module documentation or contact
+the security team.
+
+================================================================================

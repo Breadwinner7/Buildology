@@ -442,7 +442,7 @@ function AppointmentDialog({
               {users.map(user => (
                 <div
                   key={user.id}
-                  className="flex items-center gap-3 p-2 hover:bg-gray-50 cursor-pointer"
+                  className="flex items-center gap-3 p-2 hover:bg-muted cursor-pointer"
                   onClick={() => toggleAttendee(user.id)}
                 >
                   <Checkbox
@@ -602,7 +602,7 @@ export default function AppointmentsPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="min-h-screen bg-background p-6">
         <div className="max-w-screen-2xl mx-auto space-y-6">
           <Skeleton className="h-8 w-64" />
           <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
@@ -621,7 +621,7 @@ export default function AppointmentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-background">
       <div className="p-6 max-w-screen-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
