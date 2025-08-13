@@ -26,8 +26,8 @@ CREATE TABLE public.appointments (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT appointments_pkey PRIMARY KEY (id),
-  CONSTRAINT appointments_organizer_id_fkey FOREIGN KEY (organizer_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT appointments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT appointments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT appointments_organizer_id_fkey FOREIGN KEY (organizer_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.approval_requests (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -50,9 +50,9 @@ CREATE TABLE public.approval_requests (
   metadata jsonb DEFAULT '{}'::jsonb,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT approval_requests_pkey PRIMARY KEY (id),
-  CONSTRAINT approval_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT approval_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT approval_requests_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT approval_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT approval_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.audit_log (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -93,8 +93,8 @@ CREATE TABLE public.claims (
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT claims_pkey PRIMARY KEY (id),
   CONSTRAINT claims_adjuster_id_fkey FOREIGN KEY (adjuster_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT claims_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.insurance_policies(id),
-  CONSTRAINT claims_handler_id_fkey FOREIGN KEY (handler_id) REFERENCES public.user_profiles(id)
+  CONSTRAINT claims_handler_id_fkey FOREIGN KEY (handler_id) REFERENCES public.user_profiles(id),
+  CONSTRAINT claims_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.insurance_policies(id)
 );
 CREATE TABLE public.client_money_transactions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -111,8 +111,8 @@ CREATE TABLE public.client_money_transactions (
   fca_reportable boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT client_money_transactions_pkey PRIMARY KEY (id),
-  CONSTRAINT client_money_transactions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT client_money_transactions_authorized_by_fkey FOREIGN KEY (authorized_by) REFERENCES public.user_profiles(id)
+  CONSTRAINT client_money_transactions_authorized_by_fkey FOREIGN KEY (authorized_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT client_money_transactions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.communication_preferences (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -169,8 +169,8 @@ CREATE TABLE public.consent_records (
   user_agent text,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT consent_records_pkey PRIMARY KEY (id),
-  CONSTRAINT consent_records_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT consent_records_processing_purpose_fkey FOREIGN KEY (processing_purpose) REFERENCES public.data_processing_purposes(purpose_code)
+  CONSTRAINT consent_records_processing_purpose_fkey FOREIGN KEY (processing_purpose) REFERENCES public.data_processing_purposes(purpose_code),
+  CONSTRAINT consent_records_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.contractor_assessments (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -213,9 +213,9 @@ CREATE TABLE public.contractor_assessments (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT contractor_assessments_pkey PRIMARY KEY (id),
+  CONSTRAINT contractor_assessments_contractor_id_fkey FOREIGN KEY (contractor_id) REFERENCES public.user_profiles(id),
   CONSTRAINT contractor_assessments_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT contractor_assessments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT contractor_assessments_contractor_id_fkey FOREIGN KEY (contractor_id) REFERENCES public.user_profiles(id)
+  CONSTRAINT contractor_assessments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.contractor_performance (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -237,9 +237,9 @@ CREATE TABLE public.contractor_performance (
   evaluation_date date DEFAULT CURRENT_DATE,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT contractor_performance_pkey PRIMARY KEY (id),
-  CONSTRAINT contractor_performance_evaluated_by_fkey FOREIGN KEY (evaluated_by) REFERENCES public.user_profiles(id),
   CONSTRAINT contractor_performance_contractor_user_id_fkey FOREIGN KEY (contractor_user_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT contractor_performance_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT contractor_performance_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT contractor_performance_evaluated_by_fkey FOREIGN KEY (evaluated_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.contractor_teams (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -310,10 +310,10 @@ CREATE TABLE public.damage_items (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT damage_items_pkey PRIMARY KEY (id),
-  CONSTRAINT damage_items_surveyed_by_fkey FOREIGN KEY (surveyed_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT damage_items_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
   CONSTRAINT damage_items_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT damage_items_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT damage_items_surveyed_by_fkey FOREIGN KEY (surveyed_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT damage_items_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
   CONSTRAINT damage_items_hod_code_id_fkey FOREIGN KEY (hod_code_id) REFERENCES public.hod_codes(id)
 );
 CREATE TABLE public.data_access_log (
@@ -376,8 +376,8 @@ CREATE TABLE public.data_subject_requests (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT data_subject_requests_pkey PRIMARY KEY (id),
-  CONSTRAINT data_subject_requests_data_subject_id_fkey FOREIGN KEY (data_subject_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT data_subject_requests_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id)
+  CONSTRAINT data_subject_requests_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id),
+  CONSTRAINT data_subject_requests_data_subject_id_fkey FOREIGN KEY (data_subject_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.document_access (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -387,9 +387,9 @@ CREATE TABLE public.document_access (
   shared_by_user uuid,
   shared_at timestamp without time zone DEFAULT now(),
   CONSTRAINT document_access_pkey PRIMARY KEY (id),
-  CONSTRAINT document_access_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
   CONSTRAINT document_access_shared_by_user_fkey FOREIGN KEY (shared_by_user) REFERENCES public.user_profiles(id),
-  CONSTRAINT document_access_shared_with_user_fkey FOREIGN KEY (shared_with_user) REFERENCES public.user_profiles(id)
+  CONSTRAINT document_access_shared_with_user_fkey FOREIGN KEY (shared_with_user) REFERENCES public.user_profiles(id),
+  CONSTRAINT document_access_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
 );
 CREATE TABLE public.document_access_log (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -434,18 +434,18 @@ CREATE TABLE public.document_comments (
   resolved_at timestamp with time zone,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT document_comments_pkey PRIMARY KEY (id),
-  CONSTRAINT document_comments_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id),
   CONSTRAINT document_comments_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
+  CONSTRAINT document_comments_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
   CONSTRAINT document_comments_parent_comment_id_fkey FOREIGN KEY (parent_comment_id) REFERENCES public.document_comments(id),
-  CONSTRAINT document_comments_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+  CONSTRAINT document_comments_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.document_tag_links (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   document_id uuid,
   tag_id uuid,
   CONSTRAINT document_tag_links_pkey PRIMARY KEY (id),
-  CONSTRAINT document_tag_links_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
-  CONSTRAINT document_tag_links_tag_id_fkey FOREIGN KEY (tag_id) REFERENCES public.document_tags(id)
+  CONSTRAINT document_tag_links_tag_id_fkey FOREIGN KEY (tag_id) REFERENCES public.document_tags(id),
+  CONSTRAINT document_tag_links_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
 );
 CREATE TABLE public.document_tags (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -480,8 +480,8 @@ CREATE TABLE public.document_versions (
   is_current boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT document_versions_pkey PRIMARY KEY (id),
-  CONSTRAINT document_versions_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT document_versions_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+  CONSTRAINT document_versions_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT document_versions_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.documents (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -496,7 +496,7 @@ CREATE TABLE public.documents (
   file_size bigint CHECK (file_size IS NULL OR file_size > 0),
   updated_at timestamp with time zone DEFAULT now(),
   workflow_stage text,
-  approval_status text DEFAULT 'pending'::text,
+  approval_status text DEFAULT 'pending'::text CHECK (approval_status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'available'::text])),
   approved_by uuid,
   approved_at timestamp with time zone,
   version_number integer DEFAULT 1,
@@ -511,12 +511,17 @@ CREATE TABLE public.documents (
   shared_at timestamp with time zone,
   uploaded_by_role text,
   visibility text DEFAULT 'project_team'::text CHECK (visibility = ANY (ARRAY['private'::text, 'project_team'::text, 'public'::text])),
+  review_status text CHECK (review_status = ANY (ARRAY['unreviewed'::text, 'reviewed'::text])),
+  reviewed_by uuid,
+  reviewed_at timestamp with time zone,
+  review_comments text,
   CONSTRAINT documents_pkey PRIMARY KEY (id),
-  CONSTRAINT documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
   CONSTRAINT documents_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
   CONSTRAINT documents_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.user_profiles(id),
   CONSTRAINT documents_supersedes_document_id_fkey FOREIGN KEY (supersedes_document_id) REFERENCES public.documents(id),
-  CONSTRAINT documents_shared_by_fkey FOREIGN KEY (shared_by) REFERENCES public.user_profiles(id)
+  CONSTRAINT documents_shared_by_fkey FOREIGN KEY (shared_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT documents_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.fca_reporting_events (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -544,8 +549,8 @@ CREATE TABLE public.fca_reporting_events (
   preventive_measures ARRAY,
   CONSTRAINT fca_reporting_events_pkey PRIMARY KEY (id),
   CONSTRAINT fca_reporting_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT fca_reporting_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT fca_reporting_events_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id)
+  CONSTRAINT fca_reporting_events_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id),
+  CONSTRAINT fca_reporting_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.hod_codes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -607,9 +612,9 @@ CREATE TABLE public.invoices (
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT invoices_pkey PRIMARY KEY (id),
   CONSTRAINT invoices_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT invoices_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT invoices_bill_to_organisation_id_fkey FOREIGN KEY (bill_to_organisation_id) REFERENCES public.organisations(id),
   CONSTRAINT invoices_quote_id_fkey FOREIGN KEY (quote_id) REFERENCES public.quotes(id),
-  CONSTRAINT invoices_bill_to_organisation_id_fkey FOREIGN KEY (bill_to_organisation_id) REFERENCES public.organisations(id)
+  CONSTRAINT invoices_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.message_reactions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -618,16 +623,16 @@ CREATE TABLE public.message_reactions (
   emoji text NOT NULL,
   created_at timestamp without time zone DEFAULT now(),
   CONSTRAINT message_reactions_pkey PRIMARY KEY (id),
-  CONSTRAINT message_reactions_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id),
-  CONSTRAINT message_reactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+  CONSTRAINT message_reactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT message_reactions_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id)
 );
 CREATE TABLE public.message_reads (
   message_id uuid NOT NULL,
   user_id uuid NOT NULL,
   read_at timestamp with time zone DEFAULT now(),
   CONSTRAINT message_reads_pkey PRIMARY KEY (message_id, user_id),
-  CONSTRAINT message_reads_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT message_reads_message_id_fkey1 FOREIGN KEY (message_id) REFERENCES public.messages(id)
+  CONSTRAINT message_reads_message_id_fkey1 FOREIGN KEY (message_id) REFERENCES public.messages(id),
+  CONSTRAINT message_reads_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.messages (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -645,10 +650,10 @@ CREATE TABLE public.messages (
   deleted_by uuid,
   metadata jsonb DEFAULT '{}'::jsonb,
   CONSTRAINT messages_pkey PRIMARY KEY (id),
-  CONSTRAINT messages_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.threads(id),
   CONSTRAINT messages_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.user_profiles(id),
   CONSTRAINT messages_reply_to_fkey FOREIGN KEY (reply_to) REFERENCES public.messages(id),
-  CONSTRAINT messages_sender_id_fkey FOREIGN KEY (sender_id) REFERENCES public.user_profiles(id)
+  CONSTRAINT messages_sender_id_fkey FOREIGN KEY (sender_id) REFERENCES public.user_profiles(id),
+  CONSTRAINT messages_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.threads(id)
 );
 CREATE TABLE public.mobile_uploads (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -751,10 +756,10 @@ CREATE TABLE public.payments (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT payments_pkey PRIMARY KEY (id),
+  CONSTRAINT payments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT payments_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id),
   CONSTRAINT payments_authorised_by_fkey FOREIGN KEY (authorised_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT payments_processed_by_fkey FOREIGN KEY (processed_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT payments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT payments_processed_by_fkey FOREIGN KEY (processed_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.pc_sums (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -778,11 +783,11 @@ CREATE TABLE public.pc_sums (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT pc_sums_pkey PRIMARY KEY (id),
-  CONSTRAINT pc_sums_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
-  CONSTRAINT pc_sums_contractor_id_fkey FOREIGN KEY (contractor_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT pc_sums_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT pc_sums_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT pc_sums_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
+  CONSTRAINT pc_sums_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT pc_sums_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
+  CONSTRAINT pc_sums_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT pc_sums_contractor_id_fkey FOREIGN KEY (contractor_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.pi_insurance_policies (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -801,9 +806,9 @@ CREATE TABLE public.pi_insurance_policies (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT pi_insurance_policies_pkey PRIMARY KEY (id),
-  CONSTRAINT pi_insurance_policies_organisation_id_fkey FOREIGN KEY (organisation_id) REFERENCES public.organisations(id),
+  CONSTRAINT pi_insurance_policies_certificate_document_id_fkey FOREIGN KEY (certificate_document_id) REFERENCES public.documents(id),
   CONSTRAINT pi_insurance_policies_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT pi_insurance_policies_certificate_document_id_fkey FOREIGN KEY (certificate_document_id) REFERENCES public.documents(id)
+  CONSTRAINT pi_insurance_policies_organisation_id_fkey FOREIGN KEY (organisation_id) REFERENCES public.organisations(id)
 );
 CREATE TABLE public.professional_qualifications (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -857,9 +862,9 @@ CREATE TABLE public.project_members (
   end_date date,
   assignment_notes text,
   CONSTRAINT project_members_pkey PRIMARY KEY (id),
-  CONSTRAINT project_members_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT project_members_project_id_fkey1 FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT project_members_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES auth.users(id),
-  CONSTRAINT project_members_project_id_fkey1 FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT project_members_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.project_milestones (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -878,8 +883,8 @@ CREATE TABLE public.project_milestones (
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT project_milestones_pkey PRIMARY KEY (id),
   CONSTRAINT project_milestones_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT project_milestones_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES auth.users(id),
-  CONSTRAINT project_milestones_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id)
+  CONSTRAINT project_milestones_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id),
+  CONSTRAINT project_milestones_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES auth.users(id)
 );
 CREATE TABLE public.project_reserves (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -981,8 +986,8 @@ CREATE TABLE public.quotes (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT quotes_pkey PRIMARY KEY (id),
-  CONSTRAINT quotes_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT quotes_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT quotes_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT quotes_contractor_id_fkey FOREIGN KEY (contractor_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.reserve_history (
@@ -1003,9 +1008,9 @@ CREATE TABLE public.reserve_history (
   change_date timestamp with time zone DEFAULT now(),
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT reserve_history_pkey PRIMARY KEY (id),
-  CONSTRAINT reserve_history_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT reserve_history_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT reserve_history_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id)
+  CONSTRAINT reserve_history_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
+  CONSTRAINT reserve_history_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.reserve_movements (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1056,8 +1061,8 @@ CREATE TABLE public.risk_assessments (
   next_review_date date,
   last_review_date date,
   CONSTRAINT risk_assessments_pkey PRIMARY KEY (id),
-  CONSTRAINT risk_assessments_assessor_id_fkey FOREIGN KEY (assessor_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT risk_assessments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT risk_assessments_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT risk_assessments_assessor_id_fkey FOREIGN KEY (assessor_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.role_permissions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1091,10 +1096,10 @@ CREATE TABLE public.scope_variations (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT scope_variations_pkey PRIMARY KEY (id),
-  CONSTRAINT scope_variations_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT scope_variations_surveyor_id_fkey FOREIGN KEY (surveyor_id) REFERENCES public.user_profiles(id),
   CONSTRAINT scope_variations_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT scope_variations_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id)
+  CONSTRAINT scope_variations_surveyor_id_fkey FOREIGN KEY (surveyor_id) REFERENCES public.user_profiles(id),
+  CONSTRAINT scope_variations_reserve_id_fkey FOREIGN KEY (reserve_id) REFERENCES public.project_reserves(id),
+  CONSTRAINT scope_variations_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.security_events (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1203,8 +1208,8 @@ CREATE TABLE public.survey_forms (
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT survey_forms_pkey PRIMARY KEY (id),
-  CONSTRAINT survey_forms_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT survey_forms_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT survey_forms_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
   CONSTRAINT survey_forms_surveyor_id_fkey FOREIGN KEY (surveyor_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.tasks (
@@ -1222,8 +1227,8 @@ CREATE TABLE public.tasks (
   created_by uuid,
   CONSTRAINT tasks_pkey PRIMARY KEY (id),
   CONSTRAINT tasks_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id),
-  CONSTRAINT tasks_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT tasks_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id)
+  CONSTRAINT tasks_assigned_to_fkey FOREIGN KEY (assigned_to) REFERENCES public.user_profiles(id),
+  CONSTRAINT tasks_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.tcf_interactions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1238,8 +1243,8 @@ CREATE TABLE public.tcf_interactions (
   reviewed_by uuid,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT tcf_interactions_pkey PRIMARY KEY (id),
-  CONSTRAINT tcf_interactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
   CONSTRAINT tcf_interactions_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public.user_profiles(id),
+  CONSTRAINT tcf_interactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
   CONSTRAINT tcf_interactions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.teams (
@@ -1255,8 +1260,8 @@ CREATE TABLE public.thread_participants (
   joined_at timestamp with time zone DEFAULT now(),
   last_read_at timestamp with time zone,
   CONSTRAINT thread_participants_pkey PRIMARY KEY (thread_id, user_id),
-  CONSTRAINT thread_participants_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT thread_participants_thread_id_fkey1 FOREIGN KEY (thread_id) REFERENCES public.threads(id)
+  CONSTRAINT thread_participants_thread_id_fkey1 FOREIGN KEY (thread_id) REFERENCES public.threads(id),
+  CONSTRAINT thread_participants_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.threads (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1283,8 +1288,8 @@ CREATE TABLE public.timeline_events (
   content text,
   created_at timestamp without time zone DEFAULT now(),
   CONSTRAINT timeline_events_pkey PRIMARY KEY (id),
-  CONSTRAINT timeline_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
-  CONSTRAINT timeline_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+  CONSTRAINT timeline_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT timeline_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
 );
 CREATE TABLE public.user_availability (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1297,8 +1302,8 @@ CREATE TABLE public.user_availability (
   notes text,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT user_availability_pkey PRIMARY KEY (id),
-  CONSTRAINT user_availability_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id),
-  CONSTRAINT user_availability_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT user_availability_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT user_availability_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user_profiles(id)
 );
 CREATE TABLE public.user_organisations (
   user_id uuid NOT NULL,
@@ -1443,6 +1448,6 @@ CREATE TABLE public.workflow_transitions (
   conditions_met jsonb DEFAULT '{}'::jsonb,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT workflow_transitions_pkey PRIMARY KEY (id),
-  CONSTRAINT workflow_transitions_transitioned_by_fkey FOREIGN KEY (transitioned_by) REFERENCES public.user_profiles(id),
-  CONSTRAINT workflow_transitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id)
+  CONSTRAINT workflow_transitions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT workflow_transitions_transitioned_by_fkey FOREIGN KEY (transitioned_by) REFERENCES public.user_profiles(id)
 );
